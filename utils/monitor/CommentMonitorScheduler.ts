@@ -1,15 +1,15 @@
 import { getArticleList } from '~/apis';
 import {
   type CommentMonitorTask,
+  getCommentMonitorTasksByFakeid,
   getCommentMonitorTasksByStatus,
   updateCommentMonitorTask,
 } from '~/store/v2/commentMonitorTask';
+import { findValidCredential } from '~/utils/credentials';
 import { syncMonitorTaskComments } from '~/utils/monitor/task-sync';
 
 /** 默认刷新周期：60 秒 */
 const DEFAULT_INTERVAL_MS = 60 * 1000;
-/** 凭证将过期的提醒周期：25 分钟 */
-const CREDENTIAL_REFRESH_INTERVAL_MS = 25 * 60 * 1000;
 
 export interface CommentMonitorSchedulerEvents {
   /** 一次累积同步成功 */
@@ -20,15 +20,21 @@ export interface CommentMonitorSchedulerEvents {
   'task-finalized': (task: CommentMonitorTask) => void;
   /** 一次同步或最终采集失败 */
   'task-error': (taskId: number, error: Error) => void;
-  /** 凭证即将过期提醒（25min 一次） */
-  'credential-expiring': () => void;
+  /** 任务因 fakeid 缺有效 credential 进入 awaiting_credential */
+  'task-awaiting-credential': (taskId: number, fakeid: string) => void;
+  /** 某个 fakeid 的 awaiting 任务被新到达的 credential 唤醒并同步成功，切回 tracking */
+  'task-resumed': (taskId: number) => void;
 }
 
 type ListenerMap = { [K in keyof CommentMonitorSchedulerEvents]?: CommentMonitorSchedulerEvents[K][] };
 
+/** 判断错误是否属于 "目标 fakeid credential 缺失/无效"，用于把任务降级到 awaiting_credential */
+function isCredentialMissingError(error: Error): boolean {
+  return /Credential\s*(未设置|可能已过期)|未能修复文章\s*fakeid/i.test(error.message);
+}
+
 export class CommentMonitorScheduler {
   private intervalId: ReturnType<typeof setInterval> | null = null;
-  private credentialReminderId: ReturnType<typeof setInterval> | null = null;
   private listeners: ListenerMap = {};
   private working = false;
   private readonly intervalMs: number;
@@ -59,9 +65,6 @@ export class CommentMonitorScheduler {
     if (this.intervalId) return;
     this.tick();
     this.intervalId = setInterval(() => this.tick(), this.intervalMs);
-    this.credentialReminderId = setInterval(() => {
-      this.emit('credential-expiring');
-    }, CREDENTIAL_REFRESH_INTERVAL_MS);
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.handleVisibility);
     }
@@ -71,10 +74,6 @@ export class CommentMonitorScheduler {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-    }
-    if (this.credentialReminderId) {
-      clearInterval(this.credentialReminderId);
-      this.credentialReminderId = null;
     }
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.handleVisibility);
@@ -101,7 +100,7 @@ export class CommentMonitorScheduler {
     if (this.working) return;
     this.working = true;
     try {
-      // 先处理 tracking：累积或切换到 final_collecting
+      // 1. tracking：到时切 final_collecting；否则先校验 credential 再同步
       const trackingTasks = await getCommentMonitorTasksByStatus('tracking');
       for (const task of trackingTasks) {
         if (Date.now() >= task.tracking_end_at) {
@@ -110,10 +109,25 @@ export class CommentMonitorScheduler {
           continue;
         }
         if (task.auto_track_enabled === false) continue;
+
+        if (!findValidCredential(task.fakeid)) {
+          await this.transitionToAwaitingCredential(task);
+          continue;
+        }
+
         await this.syncTrackingTask(task);
       }
 
-      // 再处理 final_collecting：包括上面同轮刚切过去的
+      // 2. awaiting_credential：仅检查是否到时进入 final_collecting；其余等 wake
+      const awaitingTasks = await getCommentMonitorTasksByStatus('awaiting_credential');
+      for (const task of awaitingTasks) {
+        if (Date.now() >= task.tracking_end_at) {
+          await updateCommentMonitorTask(task.id!, { status: 'final_collecting' });
+          this.emit('tracking-complete', task.id!);
+        }
+      }
+
+      // 3. final_collecting：包括上面同轮刚切过去的
       const finalizingTasks = await getCommentMonitorTasksByStatus('final_collecting');
       for (const task of finalizingTasks) {
         await this.finalizeTask(task);
@@ -123,12 +137,48 @@ export class CommentMonitorScheduler {
     }
   }
 
+  private async transitionToAwaitingCredential(task: CommentMonitorTask) {
+    if (task.status === 'awaiting_credential') return;
+    await updateCommentMonitorTask(task.id!, { status: 'awaiting_credential' });
+    this.emit('task-awaiting-credential', task.id!, task.fakeid);
+  }
+
   private async syncTrackingTask(task: CommentMonitorTask) {
     try {
       const result = await syncMonitorTaskComments(task);
       this.emit('task-synced', task.id!, result.mergedComments.length);
     } catch (err) {
-      this.emit('task-error', task.id!, err as Error);
+      const error = err as Error;
+      if (isCredentialMissingError(error)) {
+        await this.transitionToAwaitingCredential(task);
+        return;
+      }
+      this.emit('task-error', task.id!, error);
+    }
+  }
+
+  /**
+   * 由外部（前端 credential 到达事件）调用：唤醒指定 fakeid 下所有 awaiting_credential 任务，
+   * 立即执行一次同步；成功则切回 tracking，仍失败则保持 awaiting_credential。
+   */
+  async wakeAwaitingByFakeid(fakeid: string): Promise<void> {
+    if (!findValidCredential(fakeid)) return;
+    const tasks = await getCommentMonitorTasksByFakeid(fakeid);
+    const awaiting = tasks.filter(t => t.status === 'awaiting_credential');
+    for (const task of awaiting) {
+      try {
+        const result = await syncMonitorTaskComments(task);
+        await updateCommentMonitorTask(task.id!, { status: 'tracking' });
+        this.emit('task-resumed', task.id!);
+        this.emit('task-synced', task.id!, result.mergedComments.length);
+      } catch (err) {
+        const error = err as Error;
+        if (isCredentialMissingError(error)) {
+          // 服务端仍拒绝，保持 awaiting_credential 等待下一次 credential
+          continue;
+        }
+        this.emit('task-error', task.id!, error);
+      }
     }
   }
 

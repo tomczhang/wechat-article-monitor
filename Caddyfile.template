@@ -1,0 +1,19 @@
+# 由 entrypoint.sh 通过 envsubst 渲染到 /etc/caddy/Caddyfile
+# 仅引用环境变量：${PUBLIC_DOMAIN}, ${CADDY_ACME_EMAIL}
+
+{
+    email ${CADDY_ACME_EMAIL}
+}
+
+${PUBLIC_DOMAIN} {
+    encode gzip zstd
+
+    # WebSocket / SSE 友好：禁用 buffer，长超时
+    reverse_proxy localhost:3000 {
+        flush_interval -1
+        transport http {
+            keepalive 10m
+            response_header_timeout 0
+        }
+    }
+}

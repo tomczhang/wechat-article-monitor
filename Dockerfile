@@ -37,10 +37,22 @@ LABEL maintainer="findsource@proton.me" \
       org.opencontainers.image.description="一个在线的微信公众号文章批量下载工具，支持下载阅读量与评论数据，支持私有化部署，通过浏览器进行使用，无需进行安装" \
       org.opencontainers.image.licenses="MIT"
 
-# 安装 Chromium、中文字体和 CA 证书
-RUN apt-get update && apt-get install -y \
-    chromium fonts-noto-cjk fonts-noto-color-emoji ca-certificates \
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+# 系统依赖：
+# - Chromium / 中文字体 / CA：PDF 导出与文章渲染（原有）
+# - python3 / pip：跑 credential-service/credential.py + mitmproxy
+# - gettext-base：entrypoint 用 envsubst 渲染 Caddyfile
+# - curl / gnupg / debian-keyring：安装 Caddy 官方仓库
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium fonts-noto-cjk fonts-noto-color-emoji ca-certificates \
+        python3 python3-pip python3-venv \
+        gettext-base curl gnupg debian-keyring debian-archive-keyring apt-transport-https \
+    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+        | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+        > /etc/apt/sources.list.d/caddy-stable.list \
+    && apt-get update && apt-get install -y --no-install-recommends caddy \
+    && apt-get purge -y --auto-remove gnupg \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
@@ -48,20 +60,31 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 # 设置工作目录
 WORKDIR /app
 
-# 复制构建输出
+# 安装 credential-service 的 Python 依赖（mitmproxy + beautifulsoup4）
+# Debian Bookworm 起 pip 默认拒绝向系统 site-packages 安装（PEP 668），
+# 容器内用 --break-system-packages 是安全的（容器即沙箱）
+COPY credential-service/requirements.txt /app/credential-service/requirements.txt
+RUN pip install --break-system-packages --no-cache-dir -r /app/credential-service/requirements.txt
+
+# 复制 credential 抓包脚本与构建输出
+COPY credential-service/credential.py /app/credential-service/credential.py
 COPY --from=build-env /app/.output ./
 
-# 创建 KV 存储目录并设置权限（以 root 运行，确保 node 用户可写）
-RUN mkdir -p .data/kv && chown -R node:node /app
+# 复制 Caddy 模板与入口脚本
+COPY Caddyfile.template /etc/caddy/Caddyfile.template
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# 创建非 root 用户（使用内置 node 用户）
-USER node
+# 创建运行时目录：KV / credential 数据 / Caddy 数据
+RUN mkdir -p /app/.data/kv /app/credential-service/data /data/caddy
 
-# 暴露端口
-EXPOSE 3000
+# 暴露端口：3000 Nuxt（不直接对外）/ 80,443 Caddy / 65000 mitm
+EXPOSE 3000 80 443 65000
 
-# 设置环境变量：生产模式，监听所有接口
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+# 运行时环境变量
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3000 \
+    HOME=/root
 
-# 启动命令：运行 Nitro 生成的服务器
-ENTRYPOINT ["node", "server/index.mjs"]
+ENTRYPOINT ["/entrypoint.sh"]

@@ -7,6 +7,7 @@ import {
   updateCommentMonitorTask,
 } from '~/store/v2/commentMonitorTask';
 import type { WatchedAccount } from '~/store/v2/watchedAccount';
+import type { ParsedCredential } from '~/types/credential';
 import type { AppMsgEx } from '~/types/types';
 import { extractCommentId } from '~/utils/comment';
 import { downloadArticleHTML } from '~/utils/index';
@@ -15,12 +16,19 @@ import { generateMonitorHtml, generateMonitorMarkdown } from '~/utils/monitor/Mo
 import { ensureMonitorTaskArticleStub, parseArticleUrlMeta, syncMonitorTaskComments } from '~/utils/monitor/task-sync';
 
 const TRACKING_DURATION_MS = 1.5 * 60 * 60 * 1000;
+/** fakeid 维度的通知节流窗口：5 分钟 */
+const NOTIFY_THROTTLE_MS = 5 * 60 * 1000;
 
 const tasks = ref<CommentMonitorTask[]>([]);
 const monitoring = ref(false);
 
 let scheduler: CommentMonitorScheduler | null = null;
 let schedulerListenersBound = false;
+let credentialWatchStop: (() => void) | null = null;
+/** fakeid → 上次系统通知发送时间戳，用于跨重复事件去抖 */
+const lastNotifiedAt = new Map<string, number>();
+/** 上次比对的有效 credential fakeid 集合，diff 出"新到达" */
+let lastValidFakeids: Set<string> = new Set();
 
 export default function useCommentMonitor() {
   const toast = toastFactory();
@@ -116,9 +124,65 @@ export default function useCommentMonitor() {
       await refreshTasks();
     });
 
-    s.on('credential-expiring', () => {
-      toast.warning('凭证即将过期', '请在手机微信中打开一篇被监控公众号的文章以刷新凭证');
+    s.on('task-awaiting-credential', async (taskId, fakeid) => {
+      await refreshTasks();
+      const task = tasks.value.find(t => t.id === taskId);
+      if (!task) return;
+      maybeNotifyAwaiting(task, fakeid);
     });
+
+    s.on('task-resumed', async taskId => {
+      await refreshTasks();
+      const task = tasks.value.find(t => t.id === taskId);
+      if (task) {
+        toast.success('凭证已到达', `【${task.nickname}】${task.article_title} 已恢复同步`);
+      }
+    });
+  }
+
+  /** 满足 tab 失焦 + 已授权 + 节流 时弹一次系统通知，否则静默 */
+  function maybeNotifyAwaiting(task: CommentMonitorTask, fakeid: string) {
+    if (typeof window === 'undefined' || typeof Notification === 'undefined') return;
+    if (!document.hidden) return;
+    if (Notification.permission !== 'granted') return;
+    const now = Date.now();
+    const last = lastNotifiedAt.get(fakeid) ?? 0;
+    if (now - last < NOTIFY_THROTTLE_MS) return;
+    lastNotifiedAt.set(fakeid, now);
+    try {
+      new Notification(`等待凭证 — ${task.nickname}`, {
+        body: `${task.article_title} 暂无可用凭证，请在手机微信打开一篇该公众号文章`,
+        tag: `awaiting-credential:${fakeid}`,
+      });
+    } catch (err) {
+      console.warn('[CommentMonitor] Notification failed:', err);
+    }
+  }
+
+  /** 监听 localStorage 中的 credential 列表，diff 出新到达的 fakeid 唤醒对应 awaiting 任务 */
+  function bindCredentialWatcher() {
+    if (credentialWatchStop) return;
+    const credentials = useLocalStorage<ParsedCredential[]>('auto-detect-credentials:credentials', []);
+    credentialWatchStop = watch(
+      credentials,
+      list => {
+        if (!scheduler) return;
+        const validNow = new Set(
+          (list ?? []).filter(c => Date.now() < c.timestamp + 1000 * 60 * 25).map(c => c.biz)
+        );
+        const newlyArrived: string[] = [];
+        for (const fakeid of validNow) {
+          if (!lastValidFakeids.has(fakeid)) newlyArrived.push(fakeid);
+        }
+        lastValidFakeids = validNow;
+        for (const fakeid of newlyArrived) {
+          scheduler.wakeAwaitingByFakeid(fakeid).catch(err => {
+            console.warn('[CommentMonitor] wakeAwaitingByFakeid failed:', err);
+          });
+        }
+      },
+      { deep: true, immediate: true }
+    );
   }
 
   function startMonitor() {
@@ -128,6 +192,7 @@ export default function useCommentMonitor() {
     }
     scheduler = new CommentMonitorScheduler();
     bindSchedulerListeners(scheduler);
+    bindCredentialWatcher();
     scheduler.start();
     monitoring.value = true;
   }
@@ -137,6 +202,10 @@ export default function useCommentMonitor() {
       scheduler.stop();
       scheduler.removeAllListeners();
       scheduler = null;
+    }
+    if (credentialWatchStop) {
+      credentialWatchStop();
+      credentialWatchStop = null;
     }
     schedulerListenersBound = false;
     monitoring.value = false;
@@ -270,9 +339,26 @@ export default function useCommentMonitor() {
     await refreshTasks();
   }
 
+  const awaitingTasks = computed(() => tasks.value.filter(t => t.status === 'awaiting_credential'));
+  const awaitingCredentialCount = computed(() => awaitingTasks.value.length);
+  const awaitingByAccount = computed(() => {
+    const map = new Map<string, { fakeid: string; nickname: string; count: number }>();
+    for (const t of awaitingTasks.value) {
+      const entry = map.get(t.fakeid);
+      if (entry) {
+        entry.count += 1;
+      } else {
+        map.set(t.fakeid, { fakeid: t.fakeid, nickname: t.nickname, count: 1 });
+      }
+    }
+    return Array.from(map.values());
+  });
+
   return {
     tasks,
     monitoring,
+    awaitingCredentialCount,
+    awaitingByAccount,
     addManualArticle,
     enqueueAuto,
     removeTask,

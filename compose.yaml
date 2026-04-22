@@ -1,0 +1,23 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wechat-article-exporter:local
+    container_name: wechat-article-exporter
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "80:80"        # Caddy HTTP -> 自动 301 到 HTTPS
+      - "443:443"      # Caddy HTTPS（Let's Encrypt 证书）
+      - "65000:65000"  # mitmproxy 入站，手机端代理
+    volumes:
+      # credential 抓包结果（容器重建不丢已抓的 cred）
+      - ./data/credentials:/app/credential-service/data
+      # KV 存储（账号、cookie、登录态）
+      - ./data/kv:/app/.data/kv
+      # Caddy 数据：LE 证书 + ACME 账号（重建容器不重新签发）
+      - ./data/caddy:/data/caddy
+      # mitmproxy CA 证书目录（手机扫码下载，复用同一份 CA）
+      - ./data/mitmproxy:/root/.mitmproxy

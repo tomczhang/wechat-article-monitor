@@ -29,6 +29,8 @@ const {
 const {
   tasks,
   monitoring: commentMonitoring,
+  awaitingCredentialCount,
+  awaitingByAccount,
   addManualArticle,
   removeTask,
   retryTask,
@@ -114,17 +116,37 @@ async function onAddAccount(account: AccountInfo) {
   searchResults.value = [];
 }
 
-type BadgeColor = 'sky' | 'orange' | 'violet' | 'green' | 'rose' | 'gray';
+type BadgeColor = 'sky' | 'orange' | 'violet' | 'green' | 'rose' | 'gray' | 'amber';
 
 function getStatusLabel(status: CommentMonitorTask['status']): { label: string; color: BadgeColor } {
   const map: Record<CommentMonitorTask['status'], { label: string; color: BadgeColor }> = {
     tracking: { label: '追踪中', color: 'sky' },
+    awaiting_credential: { label: '等待凭证', color: 'amber' },
     final_collecting: { label: '最终采集中', color: 'orange' },
     exporting: { label: '导出中', color: 'violet' },
     done: { label: '已完成', color: 'green' },
     error: { label: '异常', color: 'rose' },
   };
   return map[status] ?? { label: status, color: 'gray' };
+}
+
+const NOTIFY_DISMISS_KEY = 'notification-prompt-dismissed';
+const notificationPermission = ref<NotificationPermission | 'unsupported'>('unsupported');
+const notifyPromptDismissed = useLocalStorage(NOTIFY_DISMISS_KEY, '');
+const showNotifyPrompt = computed(
+  () => notificationPermission.value === 'default' && !notifyPromptDismissed.value
+);
+
+async function onRequestNotificationPermission() {
+  if (typeof Notification === 'undefined') return;
+  try {
+    const result = await Notification.requestPermission();
+    notificationPermission.value = result;
+  } catch (err) {
+    console.warn('[monitor] requestPermission failed:', err);
+  } finally {
+    notifyPromptDismissed.value = '1';
+  }
 }
 
 function getTrackingProgress(task: CommentMonitorTask) {
@@ -162,6 +184,9 @@ onMounted(() => {
     if (discovering.value) refreshWatches();
     if (commentMonitoring.value) refreshTasks();
   }, 10000);
+  if (typeof Notification !== 'undefined') {
+    notificationPermission.value = Notification.permission;
+  }
 });
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval);
@@ -220,10 +245,49 @@ onUnmounted(() => {
             </template>
           </div>
 
+          <template v-if="awaitingCredentialCount > 0">
+            <span class="text-slate-300">|</span>
+            <UPopover mode="hover" :open-delay="100" :close-delay="200" :popper="{ placement: 'bottom-start' }">
+              <span
+                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400 cursor-help"
+              >
+                <UIcon name="i-lucide:alert-triangle" class="text-sm" />
+                <span class="font-mono">{{ awaitingCredentialCount }}</span>
+                <span>篇等 cred</span>
+              </span>
+              <template #panel>
+                <div class="p-3 min-w-[220px] space-y-1">
+                  <p class="text-xs text-slate-500 mb-1">等待凭证的公众号</p>
+                  <div
+                    v-for="entry in awaitingByAccount"
+                    :key="entry.fakeid"
+                    class="flex items-center justify-between gap-3 text-sm"
+                  >
+                    <span class="truncate">【{{ entry.nickname }}】</span>
+                    <span class="font-mono text-amber-600 dark:text-amber-400">{{ entry.count }} 篇</span>
+                  </div>
+                  <p class="text-[11px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
+                    在手机微信打开任一篇该公众号文章即可自动恢复
+                  </p>
+                </div>
+              </template>
+            </UPopover>
+          </template>
+
           <span v-if="monitoring" class="text-xs text-slate-400">系统运行中</span>
         </div>
 
         <div class="flex items-center gap-2">
+          <UButton
+            v-if="showNotifyPrompt"
+            size="xs"
+            variant="soft"
+            color="amber"
+            icon="i-lucide:bell"
+            @click="onRequestNotificationPermission"
+          >
+            开启系统通知
+          </UButton>
           <UButton icon="i-lucide:plus" color="black" @click="showSearch = true">
             添加公众号
           </UButton>
@@ -396,15 +460,39 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <!-- 追踪进度条 -->
+                <!-- 追踪进度条（tracking / awaiting_credential 共用） -->
                 <div
-                  v-if="task.status === 'tracking'"
+                  v-if="task.status === 'tracking' || task.status === 'awaiting_credential'"
                   class="mt-3 h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"
                 >
                   <div
-                    class="h-full bg-sky-500 transition-all duration-500"
+                    class="h-full transition-all duration-500"
+                    :class="task.status === 'awaiting_credential' ? 'bg-amber-500' : 'bg-sky-500'"
                     :style="{ width: `${getTrackingProgress(task)}%` }"
                   />
+                </div>
+
+                <!-- 等待凭证 -->
+                <div
+                  v-if="task.status === 'awaiting_credential'"
+                  class="mt-3 flex flex-wrap items-center justify-between gap-3"
+                >
+                  <p class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5 max-w-xl">
+                    <UIcon name="i-lucide:alert-triangle" class="flex-shrink-0" />
+                    <span>该公众号暂无可用凭证，请到手机微信打开一篇该公众号文章；凭证到达后自动恢复</span>
+                    <span class="text-slate-300">·</span>
+                    <span class="text-slate-500 font-mono">{{ getRemainingTimeText(task) }}</span>
+                  </p>
+                  <UButton
+                    size="xs"
+                    variant="outline"
+                    color="amber"
+                    icon="i-lucide:rotate-ccw"
+                    :loading="fetchingCommentTaskId === task.id"
+                    @click="onFetchComments(task.id!)"
+                  >
+                    立即重试
+                  </UButton>
                 </div>
 
                 <!-- 追踪中：状态 + 操作 -->

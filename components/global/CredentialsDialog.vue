@@ -16,6 +16,7 @@
             <div class="flex items-center gap-2">
               <span class="inline-block size-3 rounded-full" :class="serviceStatusColor"></span>
               <span class="text-sm font-medium">Credential 抓包服务</span>
+              <UBadge v-if="isRemoteMode" color="amber" variant="subtle" size="xs">远程</UBadge>
             </div>
             <div class="text-sm text-gray-500">
               <template v-if="serviceStatus.running">
@@ -35,7 +36,38 @@
             <span class="text-sm text-gray-500">{{ wsConnected ? '已连接' : '未连接' }}</span>
           </div>
 
-          <p class="text-xs text-gray-400">
+          <!-- 远程模式：手机配置指引 + 二维码下载证书 -->
+          <template v-if="isRemoteMode">
+            <div class="p-3 border rounded-lg space-y-3 bg-amber-50/50 dark:bg-amber-500/5">
+              <div class="flex items-start gap-3">
+                <UIcon name="i-lucide:smartphone" class="text-amber-500 text-lg flex-shrink-0 mt-0.5" />
+                <div class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed space-y-1">
+                  <p class="font-medium text-gray-700 dark:text-gray-200">手机端配置（推荐 Surfboard / NekoBox）</p>
+                  <p>
+                    将手机代理服务器设为
+                    <code class="bg-white dark:bg-gray-800 px-1 rounded font-mono">{{ serviceStatus.proxyAddress }}</code>
+                  </p>
+                  <p v-if="serviceStatus.proxyAuthEnabled">
+                    需要账号密码：见 VPS 上 <code class="bg-white dark:bg-gray-800 px-1 rounded">.env</code> 中
+                    <code class="bg-white dark:bg-gray-800 px-1 rounded">MITM_PROXY_AUTH</code> 字段
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3">
+                <div class="flex-shrink-0">
+                  <canvas ref="qrCanvas" class="rounded bg-white p-1" />
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed space-y-1">
+                  <p class="font-medium text-gray-700 dark:text-gray-200">扫码下载并安装 mitm CA 证书</p>
+                  <p>iOS: 装完描述文件后到 <strong>设置 → 通用 → 关于本机 → 证书信任设置</strong> 打开开关</p>
+                  <p>Android: 装完到 <strong>设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书</strong></p>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <p v-else class="text-xs text-gray-400">
             将系统代理设为 <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">127.0.0.1:{{ serviceStatus.port }}</code>，
             在微信内打开公众号文章即可自动抓取 Credentials。
           </p>
@@ -87,6 +119,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
+import QRCode from 'qrcode';
 import { getArticleList, getArticleListWithCredential } from '~/apis';
 import CredentialExpiryBar from '~/components/global/CredentialExpiryBar.vue';
 import LoginModal from '~/components/modal/Login.vue';
@@ -124,11 +157,29 @@ const toast = toastFactory();
 const modal = useModal();
 const addingBiz = ref<string | null>(null);
 
-const serviceStatus = ref<{ running: boolean; proxyAddress: string | null; port: number }>({
+interface ServiceStatus {
+  running: boolean;
+  mode: 'local' | 'remote';
+  proxyAddress: string | null;
+  port: number;
+  publicHost: string | null;
+  proxyAuthEnabled: boolean;
+  certUrl: string | null;
+  credentialCount: number;
+}
+
+const serviceStatus = ref<ServiceStatus>({
   running: false,
+  mode: 'local',
   proxyAddress: null,
   port: 65000,
+  publicHost: null,
+  proxyAuthEnabled: false,
+  certUrl: null,
+  credentialCount: 0,
 });
+
+const isRemoteMode = computed(() => serviceStatus.value.mode === 'remote');
 
 const serviceStatusColor = computed(() => {
   if (serviceStatus.value.running) return 'bg-green-500';
@@ -137,12 +188,39 @@ const serviceStatusColor = computed(() => {
 
 async function fetchServiceStatus() {
   try {
-    const data = await $fetch<any>('/api/credential/status');
+    const data = await $fetch<ServiceStatus>('/api/credential/status');
     serviceStatus.value = data;
   } catch {
-    serviceStatus.value = { running: false, proxyAddress: null, port: 65000 };
+    serviceStatus.value = {
+      running: false,
+      mode: 'local',
+      proxyAddress: null,
+      port: 65000,
+      publicHost: null,
+      proxyAuthEnabled: false,
+      certUrl: null,
+      credentialCount: 0,
+    };
   }
 }
+
+const qrCanvas = ref<HTMLCanvasElement | null>(null);
+
+async function renderCertQrCode() {
+  if (!isRemoteMode.value || !qrCanvas.value || !serviceStatus.value.certUrl) return;
+  const certFullUrl = `${location.origin}${serviceStatus.value.certUrl}`;
+  try {
+    await QRCode.toCanvas(qrCanvas.value, certFullUrl, {
+      width: 110,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+    });
+  } catch (err) {
+    console.warn('[CredentialsDialog] QR render failed:', err);
+  }
+}
+
+watch([isRemoteMode, () => serviceStatus.value.certUrl, qrCanvas], renderCertQrCode);
 
 function parseSetCookie(setCookie: string): { appmsg_token: string; cookie: string } {
   let appmsg_token = '';

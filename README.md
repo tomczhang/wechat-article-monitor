@@ -31,6 +31,13 @@
 
 该工具的使用教程已移至 [文档站点](https://docs.mptext.top)。
 
+### 远程部署（24/7 无人值守 Credential 抓取）
+
+如果你想让 mitmproxy 7×24 小时在线，手机微信打开公众号文章即可自动维护 credential 池，可以部署到一台轻量 VPS（推荐境外，避免 ICP 备案）：
+
+- 完整部署步骤：[`docs/deployment-vps-domain-caddy.md`](./docs/deployment-vps-domain-caddy.md)
+- 手机端代理 + mitm 证书安装：[`docs/mobile-surfboard-setup.md`](./docs/mobile-surfboard-setup.md)
+
 
 ## :dart: 特性
 

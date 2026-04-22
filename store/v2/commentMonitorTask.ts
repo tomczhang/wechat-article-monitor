@@ -15,7 +15,7 @@ export interface CommentMonitorTask {
   article_title: string;
   article_aid: string;
   comment_id: string;
-  status: 'tracking' | 'final_collecting' | 'exporting' | 'done' | 'error';
+  status: 'tracking' | 'awaiting_credential' | 'final_collecting' | 'exporting' | 'done' | 'error';
   created_at: number;
   tracking_end_at: number;
   accumulated_comments: Comment[];

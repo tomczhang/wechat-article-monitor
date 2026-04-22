@@ -4,11 +4,26 @@ import { access, mkdir, readFile, watch, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 const MITM_PORT = process.env.CREDENTIAL_MITM_PORT || '65000';
+const MITM_LISTEN_HOST = process.env.MITM_LISTEN_HOST || '127.0.0.1';
+const MITM_PROXY_AUTH = process.env.MITM_PROXY_AUTH || '';
+const PUBLIC_HOST = process.env.CREDENTIAL_PUBLIC_HOST || '';
 const SERVICE_DIR = resolve(process.cwd(), 'credential-service');
 const CREDENTIAL_PY = join(SERVICE_DIR, 'credential.py');
 const DATA_DIR = join(SERVICE_DIR, 'data');
 const CREDENTIALS_JSON = join(DATA_DIR, 'credentials.json');
 const CREDENTIAL_LIVE_MS = 30 * 60 * 1000;
+
+/** mitm CA 证书路径，由 mitmproxy 首次启动后写入 */
+export const MITM_CA_CERT_PATH = join(
+  process.env.HOME || '/root',
+  '.mitmproxy',
+  'mitmproxy-ca-cert.pem'
+);
+
+/** 远程模式：监听非 127.0.0.1，通常配合 PUBLIC_HOST 暴露给手机 */
+export function isRemoteMode(): boolean {
+  return MITM_LISTEN_HOST !== '127.0.0.1' && MITM_LISTEN_HOST !== 'localhost';
+}
 
 let mitmProcess: ChildProcess | null = null;
 let mitmRunning = false;
@@ -27,10 +42,20 @@ export interface CredentialItem {
 const wsClients = new Set<any>();
 
 export function getCredentialServiceState() {
+  const remote = isRemoteMode();
+  const port = Number(MITM_PORT);
   return {
     running: mitmRunning,
-    proxyAddress: mitmRunning ? `http://127.0.0.1:${MITM_PORT}` : null,
-    port: Number(MITM_PORT),
+    mode: remote ? ('remote' as const) : ('local' as const),
+    port,
+    publicHost: remote ? PUBLIC_HOST : null,
+    proxyAddress: mitmRunning
+      ? remote && PUBLIC_HOST
+        ? `${PUBLIC_HOST}:${port}`
+        : `http://127.0.0.1:${port}`
+      : null,
+    proxyAuthEnabled: remote && Boolean(MITM_PROXY_AUTH),
+    certUrl: remote ? '/api/credential/cert' : null,
   };
 }
 
@@ -109,7 +134,17 @@ async function startMitmProxy() {
     return;
   }
 
+  const remote = isRemoteMode();
+  if (remote && !MITM_PROXY_AUTH) {
+    console.error(
+      '[credential-service] FATAL: MITM_LISTEN_HOST is non-loopback but MITM_PROXY_AUTH is empty; refusing to expose an open proxy. Set MITM_PROXY_AUTH=user:pass and restart.'
+    );
+    process.exit(1);
+  }
+
   const args = [
+    '--listen-host',
+    MITM_LISTEN_HOST,
     '-p',
     MITM_PORT,
     '-s',
@@ -120,7 +155,13 @@ async function startMitmProxy() {
     'connection_strategy=lazy',
   ];
 
-  console.log(`[credential-service] starting mitmdump on port ${MITM_PORT}...`);
+  if (MITM_PROXY_AUTH) {
+    args.push('--proxyauth', MITM_PROXY_AUTH);
+  }
+
+  console.log(
+    `[credential-service] starting mitmdump on ${MITM_LISTEN_HOST}:${MITM_PORT} (${remote ? 'remote' : 'local'} mode${MITM_PROXY_AUTH ? ', proxyauth enabled' : ''})...`
+  );
 
   mitmProcess = spawn('mitmdump', args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -133,7 +174,9 @@ async function startMitmProxy() {
       console.log(`[mitmdump] ${line}`);
       if (line.includes('HTTP(S) proxy listening')) {
         mitmRunning = true;
-        console.log(`[credential-service] mitmproxy proxy ready at http://127.0.0.1:${MITM_PORT}`);
+        console.log(
+          `[credential-service] mitmproxy proxy ready at ${MITM_LISTEN_HOST}:${MITM_PORT}`
+        );
       }
     }
   });
