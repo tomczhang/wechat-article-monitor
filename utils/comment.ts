@@ -46,7 +46,8 @@ export function extractCommentId(html: string): string | null {
 
 /**
  * 从文章 HTML 中提取真实的 biz / mid(appmsgid) / idx(itemidx)。
- * 微信文章顶部都会有形如 `var biz = '...' || '...';` 的脚本块，
+ * 微信文章顶部都会有形如 `var biz = ""||"MzUx..."` 这样的脚本块，
+ * 同一个变量常见多个 `||` 兜底（前几项往往是空串），需要取第一个非空值。
  * 即使用户传入的是 https://mp.weixin.qq.com/s/XXXXX 这种短链，
  * 下载下来的 HTML 仍然包含真实参数；用它们覆盖 URL 解析得到的占位值，
  * 才能让后续 appmsg_comment 接口接受请求（否则返回 ret=-1）。
@@ -56,29 +57,48 @@ export function extractArticleMeta(html: string): {
   mid: string | null;
   idx: string | null;
 } {
-  const pickFirst = (pattern: RegExp): string | null => {
-    const match = html.match(pattern);
-    if (!match) return null;
-    const value = (match.groups?.value ?? match[1] ?? '').trim();
-    return value || null;
+  // 抓 `var X = ... ;` 整段表达式后，从所有 "..." / '...' 字面量里挑第一个非空值。
+  // validator 用于过滤 mid/idx 这种必须是数字的场景。
+  const pickVarValue = (varName: string, validator?: (v: string) => boolean): string | null => {
+    const exprPattern = new RegExp(`(?:var|window\\.)\\s*${varName}\\s*=\\s*([^;]+);`);
+    const exprMatch = html.match(exprPattern);
+    if (!exprMatch) return null;
+
+    const literals = exprMatch[1].matchAll(/["']([^"']*)["']/g);
+    for (const m of literals) {
+      const v = m[1].trim();
+      if (!v) continue;
+      if (validator && !validator(v)) continue;
+      return v;
+    }
+    return null;
   };
 
+  const isDigit = (v: string) => /^\d+$/.test(v);
+
   const biz =
-    pickFirst(/var\s+biz\s*=\s*['"](?<value>[^'"]+)['"]/) ||
-    pickFirst(/window\.biz\s*=\s*['"](?<value>[^'"]+)['"]/) ||
-    pickFirst(/"biz"\s*:\s*"(?<value>[^"]+)"/);
+    pickVarValue('biz') ||
+    pickVarValue('__biz') ||
+    (() => {
+      const m = html.match(/"biz"\s*:\s*"(?<value>[^"]+)"/);
+      return m?.groups?.value || null;
+    })();
 
   const mid =
-    pickFirst(/var\s+mid\s*=\s*['"](?<value>\d+)['"]/) ||
-    pickFirst(/window\.mid\s*=\s*['"](?<value>\d+)['"]/) ||
-    pickFirst(/var\s+appmsgid\s*=\s*['"]?(?<value>\d+)['"]?/) ||
-    pickFirst(/"appmsgid"\s*:\s*"?(?<value>\d+)"?/);
+    pickVarValue('mid', isDigit) ||
+    pickVarValue('appmsgid', isDigit) ||
+    (() => {
+      const m = html.match(/"appmsgid"\s*:\s*"?(?<value>\d+)"?/);
+      return m?.groups?.value || null;
+    })();
 
   const idx =
-    pickFirst(/var\s+idx\s*=\s*['"](?<value>\d+)['"]/) ||
-    pickFirst(/window\.idx\s*=\s*['"](?<value>\d+)['"]/) ||
-    pickFirst(/var\s+itemidx\s*=\s*['"]?(?<value>\d+)['"]?/) ||
-    pickFirst(/"itemidx"\s*:\s*"?(?<value>\d+)"?/);
+    pickVarValue('idx', isDigit) ||
+    pickVarValue('itemidx', isDigit) ||
+    (() => {
+      const m = html.match(/"itemidx"\s*:\s*"?(?<value>\d+)"?/);
+      return m?.groups?.value || null;
+    })();
 
   return { biz, mid, idx };
 }
