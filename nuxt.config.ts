@@ -34,6 +34,13 @@ export default defineNuxtConfig({
   sourcemap: {
     client: 'hidden',
   },
+  vite: {
+    server: {
+      watch: {
+        ignored: ['**/credential-service/.venv/**', '**/credential-service/data/**', '**/samples/**'],
+      },
+    },
+  },
   nitro: {
     minify: process.env.NODE_ENV === 'production',
     experimental: {

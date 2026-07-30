@@ -12,14 +12,11 @@ import type {
 import { AgGridVue } from 'ag-grid-vue3';
 import { defu } from 'defu';
 import { formatTimeStamp } from '#shared/utils/helpers';
-import { getArticleList } from '~/apis';
-import GlobalSearchAccountDialog from '~/components/global/SearchAccountDialog.vue';
+import { CredentialRequiredError, getArticleList } from '~/apis';
 import GridAccountActions from '~/components/grid/AccountActions.vue';
 import GridLoadProgress from '~/components/grid/LoadProgress.vue';
 import ConfirmModal from '~/components/modal/Confirm.vue';
-import LoginModal from '~/components/modal/Login.vue';
 import toastFactory from '~/composables/toast';
-import useLoginCheck from '~/composables/useLoginCheck';
 import { IMAGE_PROXY, websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
 import { deleteAccountData } from '~/store/v2';
@@ -41,7 +38,6 @@ interface PromiseInstance {
 
 const toast = toastFactory();
 const modal = useModal();
-const { checkLogin } = useLoginCheck();
 
 const { getSyncTimestamp, getSyncRangeLabel, isSyncAll } = useSyncDeadline();
 const syncToTimestamp = getSyncTimestamp();
@@ -56,22 +52,9 @@ accountEventBus.on(event => {
   }
 });
 
-const searchAccountDialogRef = ref<typeof GlobalSearchAccountDialog | null>(null);
-
-const addBtnLoading = ref(false);
+const credentialsDialogOpen = useState<boolean>('credentials-dialog-open', () => false);
 function addAccount() {
-  if (!checkLogin()) return;
-
-  searchAccountDialogRef.value!.open();
-}
-async function onSelectAccount(account: MpAccount) {
-  addBtnLoading.value = true;
-  await loadAccountArticle(account, false);
-  await refresh();
-  addBtnLoading.value = false;
-  toast.success('公众号添加成功', `已成功添加公众号【${account.nickname}】，并同步了第一页的文章数据`);
-  // 通知 Credentials 面板按钮立即变更为“已添加”
-  accountEventBus.emit('account-added', { fakeid: account.fakeid });
+  credentialsDialogOpen.value = true;
 }
 
 // 表示同步过程中是否执行了取消操作
@@ -94,7 +77,7 @@ async function _load(account: MpAccount, begin: number, loadMore: boolean, promi
   syncingRowId.value = account.fakeid;
   isSyncing.value = true;
 
-  const [articles, completed] = await getArticleList(account, begin);
+  const [articles, completed, , nextBegin] = await getArticleList(account, begin);
   if (isCanceled.value) {
     isCanceled.value = false;
     promise.reject(new Error('已取消同步'));
@@ -108,8 +91,7 @@ async function _load(account: MpAccount, begin: number, loadMore: boolean, promi
     return;
   }
 
-  const count = articles.filter(article => article.itemidx === 1).length; // 消息数
-  begin += count;
+  begin = nextBegin;
 
   // 检查是否可以「快进」，也就是存在比 lastArticle 更早的缓存数据
   // todo: 这里还可以继续优化，防止出现多段不连续的范围
@@ -125,7 +107,8 @@ async function _load(account: MpAccount, begin: number, loadMore: boolean, promi
     }
   }
 
-  if (articles.at(-1)!.create_time < syncToTimestamp) {
+  const oldestArticle = articles.at(-1);
+  if (oldestArticle && oldestArticle.create_time < syncToTimestamp) {
     // 已同步到配置的时间范围
     loadMore = false;
   }
@@ -160,8 +143,8 @@ async function loadAccountArticle(account: MpAccount, loadMore = true) {
       syncingRowId.value = null;
       isSyncing.value = false;
 
-      if (e.message === 'session expired') {
-        modal.open(LoginModal);
+      if (e instanceof CredentialRequiredError) {
+        credentialsDialogOpen.value = true;
       }
       reject(e);
     });
@@ -170,8 +153,6 @@ async function loadAccountArticle(account: MpAccount, loadMore = true) {
 
 // 同步所有公众号
 async function loadSelectedAccountArticle() {
-  if (!checkLogin()) return;
-
   isCanceled.value = false;
 
   try {
@@ -308,8 +289,6 @@ const columnDefs = ref<ColDef[]>([
     cellRenderer: GridAccountActions,
     cellRendererParams: {
       onSync: (params: ICellRendererParams) => {
-        if (!checkLogin()) return;
-
         isCanceled.value = false;
         loadAccountArticle(params.data)
           .then(() => {
@@ -495,8 +474,8 @@ const { getActualDateRange } = useSyncDeadline();
     <div class="flex flex-col h-full divide-y divide-gray-200">
       <!-- 顶部操作区 -->
       <header class="flex items-stretch gap-3 px-3 py-3">
-        <UButton icon="i-lucide:user-plus" color="blue" :disabled="isDeleting || addBtnLoading" @click="addAccount">
-          {{ addBtnLoading ? '添加中...' : '添加' }}
+        <UButton icon="i-lucide:user-plus" color="blue" :disabled="isDeleting" @click="addAccount">
+          添加
         </UButton>
         <UButton icon="i-lucide:arrow-down-to-line" color="blue" :loading="importBtnLoading" @click="importAccount">
           批量导入
@@ -548,8 +527,5 @@ const { getActualDateRange } = useSyncDeadline();
         @column-resized="onColumnStateChange"
       ></ag-grid-vue>
     </div>
-
-    <!-- 添加公众号弹框 -->
-    <GlobalSearchAccountDialog ref="searchAccountDialogRef" @select:account="onSelectAccount" />
   </div>
 </template>

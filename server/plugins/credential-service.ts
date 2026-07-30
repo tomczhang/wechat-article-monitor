@@ -6,14 +6,18 @@ import { join, resolve } from 'node:path';
 const MITM_PORT = process.env.CREDENTIAL_MITM_PORT || '65000';
 const SERVICE_DIR = resolve(process.cwd(), 'credential-service');
 const CREDENTIAL_PY = join(SERVICE_DIR, 'credential.py');
+const LOCAL_MITMDUMP =
+  process.platform === 'win32'
+    ? join(SERVICE_DIR, '.venv', 'Scripts', 'mitmdump.exe')
+    : join(SERVICE_DIR, '.venv', 'bin', 'mitmdump');
 const DATA_DIR = join(SERVICE_DIR, 'data');
 const CREDENTIALS_JSON = join(DATA_DIR, 'credentials.json');
 const CREDENTIAL_LIVE_MS = 30 * 60 * 1000;
 
 let mitmProcess: ChildProcess | null = null;
 let mitmRunning = false;
-let watcher: AsyncIterable<any> | null = null;
 let watchAbortController: AbortController | null = null;
+let broadcastTimer: NodeJS.Timeout | null = null;
 
 export interface CredentialItem {
   biz?: string;
@@ -90,7 +94,7 @@ async function startFileWatcher() {
       }
     })();
 
-    setInterval(async () => {
+    broadcastTimer = setInterval(async () => {
       const data = await readCredentials();
       broadcastCredentials(data);
     }, 5000);
@@ -109,6 +113,14 @@ async function startMitmProxy() {
     return;
   }
 
+  let mitmdumpCommand = 'mitmdump';
+  try {
+    await access(LOCAL_MITMDUMP, constants.X_OK);
+    mitmdumpCommand = LOCAL_MITMDUMP;
+  } catch {
+    // 未创建项目虚拟环境时，继续尝试使用 PATH 中的全局 mitmdump。
+  }
+
   const args = [
     '-p',
     MITM_PORT,
@@ -122,9 +134,14 @@ async function startMitmProxy() {
 
   console.log(`[credential-service] starting mitmdump on port ${MITM_PORT}...`);
 
-  mitmProcess = spawn('mitmdump', args, {
+  mitmProcess = spawn(mitmdumpCommand, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: SERVICE_DIR,
+  });
+
+  mitmProcess.once('spawn', () => {
+    mitmRunning = true;
+    console.log(`[credential-service] mitmdump process started on port ${MITM_PORT}`);
   });
 
   mitmProcess.stdout?.on('data', (chunk: Buffer) => {
@@ -165,6 +182,10 @@ function stopMitmProxy() {
   if (watchAbortController) {
     watchAbortController.abort();
     watchAbortController = null;
+  }
+  if (broadcastTimer) {
+    clearInterval(broadcastTimer);
+    broadcastTimer = null;
   }
 }
 

@@ -1,73 +1,77 @@
 import { request } from '#shared/utils/request';
-import { ACCOUNT_LIST_PAGE_SIZE, ARTICLE_LIST_PAGE_SIZE } from '~/config';
+import { ACCOUNT_LIST_PAGE_SIZE } from '~/config';
 import { updateArticleCache } from '~/store/v2/article';
 import { type MpAccount, updateLastUpdateTime } from '~/store/v2/info';
 import type { CommentResponse } from '~/types/comment';
-import type { ParsedProfileGetMsg, ProfileGetMsgResponse } from '~/types/profile_getmsg';
-import type {
-  AccountInfo,
-  AppMsgEx,
-  AppMsgPublishResponse,
-  PublishInfo,
-  PublishPage,
-  SearchBizResponse,
-} from '~/types/types';
+import type { ProfileGetMsgResponse } from '~/types/profile_getmsg';
+import type { AccountInfo, AppMsgEx, SearchBizResponse } from '~/types/types';
 import { findValidCredential } from '~/utils/credentials';
+import { convertProfileGetMsgResponse, parseProfileGetMsgList } from '~/utils/profile-getmsg';
 
 const loginAccount = useLoginAccount();
+
+export class CredentialRequiredError extends Error {
+  constructor(reason?: string) {
+    const detail = reason ? `（${reason}）` : '';
+    super(
+      `历史文章同步必须使用有效的 Credentials，当前未检测到或已失效${detail}。请按右侧面板提示设置代理，然后在微信客户端内打开该公众号任意一篇文章，获取成功后再重试。`
+    );
+    this.name = 'CredentialRequiredError';
+  }
+}
 
 /**
  * 获取文章列表
  * @param account
  * @param begin
  * @param keyword
- * @return [文章列表, 是否加载完毕, 文章总数]
+ * @return [文章列表, 是否加载完毕, 文章总数, 下一页偏移]
  */
 export async function getArticleList(
   account: MpAccount,
   begin = 0,
   keyword = ''
-): Promise<[AppMsgEx[], boolean, number]> {
-  const resp = await request<AppMsgPublishResponse>('/api/web/mp/appmsgpublish', {
-    query: {
+): Promise<[AppMsgEx[], boolean, number, number]> {
+  const credential = findValidCredential(account.fakeid);
+  if (!credential) {
+    throw new CredentialRequiredError();
+  }
+
+  if (keyword) {
+    throw new Error('Credentials 历史文章接口暂不支持关键词搜索');
+  }
+
+  const resp = await request<ProfileGetMsgResponse>('/api/web/mp/profile_ext_getmsg', {
+    method: 'POST',
+    body: {
       id: account.fakeid,
-      begin: begin,
-      size: ARTICLE_LIST_PAGE_SIZE,
-      keyword: keyword,
+      begin,
+      size: 10,
+      uin: credential.uin,
+      key: credential.key,
+      pass_ticket: credential.pass_ticket,
+      appmsg_token: credential.appmsg_token,
+      wap_sid2: credential.wap_sid2,
+      cookie: credential.cookie,
     },
   });
 
-  if (resp.base_resp.ret === 0) {
-    const publish_page: PublishPage = JSON.parse(resp.publish_page);
-    const publish_list = publish_page.publish_list.filter(item => !!item.publish_info);
-
-    // 返回的文章数量为0就表示已加载完毕
-    const isCompleted = publish_list.length === 0;
-
-    // 更新缓存，注意带有关键字搜索的结果不能写入缓存
-    if (!keyword) {
-      try {
-        await updateArticleCache(account, publish_page);
-
-        if (begin === 0) {
-          await updateLastUpdateTime(account.fakeid);
-        }
-      } catch (e) {
-        console.error('写入文章缓存失败:', e);
-      }
-    }
-
-    const articles = publish_list.flatMap(item => {
-      const publish_info: PublishInfo = JSON.parse(item.publish_info);
-      return publish_info.appmsgex;
-    });
-    return [articles, isCompleted, publish_page.total_count];
-  } else if (resp.base_resp.ret === 200003 || resp.base_resp.err_msg?.includes('未登录或登录已过期')) {
-    loginAccount.value = null;
-    throw new Error('session expired');
-  } else {
-    throw new Error(`${resp.base_resp.ret}:${resp.base_resp.err_msg}`);
+  if (resp.ret !== 0) {
+    throw new CredentialRequiredError(`${resp.ret}:${resp.errmsg || 'Credentials 已失效'}`);
   }
+
+  const { articles, completed, nextBegin, publishPage } = convertProfileGetMsgResponse(
+    resp,
+    begin,
+    account.total_count
+  );
+  await updateArticleCache(account, publishPage, completed);
+
+  if (begin === 0) {
+    await updateLastUpdateTime(account.fakeid);
+  }
+
+  return [articles, completed, publishPage.total_count, nextBegin];
 }
 
 /**
@@ -136,22 +140,26 @@ export async function getComment(commentId: string) {
 export async function getArticleListWithCredential(fakeid: string, begin = 0) {
   const targetCredential = findValidCredential(fakeid);
   if (!targetCredential) {
-    throw new Error('目标公众号的 Credential 未设置');
+    throw new CredentialRequiredError();
   }
 
   const resp = await request<ProfileGetMsgResponse>('/api/web/mp/profile_ext_getmsg', {
-    query: {
+    method: 'POST',
+    body: {
       id: fakeid,
-      begin: begin,
+      begin,
       size: 10,
       uin: targetCredential.uin,
       key: targetCredential.key,
       pass_ticket: targetCredential.pass_ticket,
+      appmsg_token: targetCredential.appmsg_token,
+      wap_sid2: targetCredential.wap_sid2,
+      cookie: targetCredential.cookie,
     },
   });
   if (resp.ret === 0) {
-    return JSON.parse(resp.general_msg_list) as ParsedProfileGetMsg[];
+    return parseProfileGetMsgList(resp.general_msg_list);
   } else {
-    throw new Error(`${resp.ret}:${resp.errmsg}`);
+    throw new CredentialRequiredError(`${resp.ret}:${resp.errmsg || 'Credentials 已失效'}`);
   }
 }

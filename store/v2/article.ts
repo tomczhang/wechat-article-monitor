@@ -9,7 +9,7 @@ export type ArticleAsset = AppMsgExWithFakeID;
  * @param account
  * @param publish_page
  */
-export async function updateArticleCache(account: MpAccount, publish_page: PublishPage) {
+export async function updateArticleCache(account: MpAccount, publish_page: PublishPage, completed?: boolean) {
   await db.transaction('rw', ['article', 'info'], async () => {
     const keys = await db.article.toCollection().keys();
 
@@ -41,7 +41,7 @@ export async function updateArticleCache(account: MpAccount, publish_page: Publi
 
     await updateInfoCache({
       fakeid: fakeid,
-      completed: publish_list.length === 0,
+      completed: completed ?? publish_list.length === 0,
       count: msgCount,
       articles: articleCount,
       nickname: account.nickname,

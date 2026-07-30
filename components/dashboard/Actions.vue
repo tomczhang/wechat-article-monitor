@@ -8,7 +8,7 @@ import { gotoLink } from '~/utils';
 const modal = useModal();
 
 // CredentialDialog 相关变量
-const credentialsDialogOpen = ref(false);
+const credentialsDialogOpen = useState<boolean>('credentials-dialog-open', () => false);
 const credentialState = ref<CredentialState>('inactive');
 const credentialPendingCount = ref(0);
 const credentialColor: ComputedRef<ChipColor> = computed<ChipColor>(() => {
