@@ -20,6 +20,20 @@
         </div>
 
         <div class="flex gap-1">
+          <UCheckbox v-model="preferences.collapseReposts" name="collapseReposts" label="折叠重发文章" />
+          <UPopover mode="hover" :popper="{ placement: 'top' }">
+            <template #panel>
+              <p class="max-w-[300px] p-3 text-sm text-gray-500">
+                公众号删掉重发时，微信的历史消息接口会把每一次群发都返回一遍，而且不一定给旧的打上删除标记。<br />
+                若勾选该选项，则同一个公众号下标题相同、发布时间相差 30
+                分钟以内的记录只显示最新一条。该选项只影响显示，不会删除本地缓存的数据。
+              </p>
+            </template>
+            <UIcon color="gray" name="i-heroicons:question-mark-circle-16-solid" class="size-5" />
+          </UPopover>
+        </div>
+
+        <div class="flex gap-1">
           <UCheckbox
             v-model="preferences.downloadConfig.forceDownloadContent"
             name="forceDownloadContent"

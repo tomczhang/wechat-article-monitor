@@ -1,4 +1,4 @@
-import { updateArticleFakeid } from '~/store/v2/article';
+import { rekeyArticleByLink, updateArticleFakeid } from '~/store/v2/article';
 import { getCommentCache } from '~/store/v2/comment';
 import { type CommentMonitorTask, updateCommentMonitorTask } from '~/store/v2/commentMonitorTask';
 import { db } from '~/store/v2/db';
@@ -10,11 +10,24 @@ import { Downloader } from '~/utils/download/Downloader';
 
 const SINGLE_ARTICLE_FAKEID = 'SINGLE_ARTICLE_FAKEID';
 
+/**
+ * 短链（https://mp.weixin.qq.com/s/XXXX）不带 mid/idx，这里从 URL 派生一个稳定 id。
+ * 用 Date.now() 的话每轮同步都会算出不同的主键，同一篇文章会被反复插入。
+ */
+function fallbackAppmsgid(parsed: URL): number {
+  const seed = `${parsed.pathname}${parsed.search}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) % 2147483647;
+  }
+  return hash;
+}
+
 export function parseArticleUrlMeta(articleUrl: string) {
   const parsed = new URL(articleUrl);
   const params = parsed.searchParams;
   const fakeid = params.get('__biz') || SINGLE_ARTICLE_FAKEID;
-  const mid = params.get('mid') || params.get('appmsgid') || `${Date.now()}`;
+  const mid = params.get('mid') || params.get('appmsgid') || `${fallbackAppmsgid(parsed)}`;
   const idx = params.get('idx') || params.get('itemidx') || '1';
   const itemidx = Number(idx) || 1;
   return {
@@ -58,13 +71,24 @@ function buildMonitorArticleStub(task: CommentMonitorTask): AppMsgExWithFakeID {
     pic_cdn_url_16_9: '',
     pic_cdn_url_235_1: '',
     title: task.article_title || '未命名文章',
-    update_time: Math.floor(Date.now() / 1000),
+    update_time: Math.floor(task.created_at / 1000),
     wecoin_count: 0,
     _single: true,
   };
 }
 
 export async function ensureMonitorTaskArticleStub(task: CommentMonitorTask) {
+  // 已存在就只补标题：此时记录的主键可能已被回填成真实 mid/idx，
+  // 再按 URL 重算主键 put 一次会插出一条新的重复文章。
+  const existing = await db.article.where('link').equals(task.article_url).first();
+  if (existing) {
+    const title = task.article_title || existing.title;
+    if (title !== existing.title) {
+      await db.article.where('link').equals(task.article_url).modify({ title });
+    }
+    return;
+  }
+
   const article = buildMonitorArticleStub(task);
   await db.article.put(article, `${article.fakeid}:${article.aid}`);
 }
@@ -154,12 +178,9 @@ export async function syncMonitorTaskComments(task: CommentMonitorTask): Promise
           }
         }
         if (Object.keys(patch).length > 0) {
-          await db.article
-            .where('link')
-            .equals(updatedTask.article_url)
-            .modify(article => {
-              Object.assign(article, patch);
-            });
+          await rekeyArticleByLink(updatedTask.article_url, article => {
+            Object.assign(article, patch);
+          });
         }
 
         if (patch.aid && patch.aid !== updatedTask.article_aid) {

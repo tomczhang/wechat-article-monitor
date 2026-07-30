@@ -9,7 +9,7 @@ export type ArticleAsset = AppMsgExWithFakeID;
  * @param account
  * @param publish_page
  */
-export async function updateArticleCache(account: MpAccount, publish_page: PublishPage) {
+export async function updateArticleCache(account: MpAccount, publish_page: PublishPage, completed?: boolean) {
   await db.transaction('rw', ['article', 'info'], async () => {
     const keys = await db.article.toCollection().keys();
 
@@ -41,7 +41,7 @@ export async function updateArticleCache(account: MpAccount, publish_page: Publi
 
     await updateInfoCache({
       fakeid: fakeid,
-      completed: publish_list.length === 0,
+      completed: completed ?? publish_list.length === 0,
       count: msgCount,
       articles: articleCount,
       nickname: account.nickname,
@@ -138,21 +138,58 @@ export async function updateArticleStatus(url: string, status: string): Promise<
 }
 
 /**
+ * 按 link 更新文章，并在 fakeid / aid 变化时重建主键。
+ *
+ * article 表的主键是 out-of-line 的 `${fakeid}:${aid}`，Dexie 的 modify 只能改字段、
+ * 改不了主键。若直接用 modify 改这两个字段，主键会与数据脱节，下一次 put 就会被当成
+ * 新记录写进去，从而产生重复行。
+ * @param url
+ * @param mutate 就地修改文章对象
+ * @param filter 只处理满足条件的记录
+ */
+export async function rekeyArticleByLink(
+  url: string,
+  mutate: (article: AppMsgExWithFakeID) => void,
+  filter?: (article: AppMsgExWithFakeID) => boolean
+): Promise<void> {
+  await db.transaction('rw', 'article', async () => {
+    const keys = (await db.article.where('link').equals(url).primaryKeys()) as string[];
+    for (const key of keys) {
+      const article = await db.article.get(key);
+      if (!article || (filter && !filter(article))) continue;
+
+      mutate(article);
+      const nextKey = `${article.fakeid}:${article.aid}`;
+      if (nextKey === key) {
+        await db.article.put(article, key);
+        continue;
+      }
+
+      // 新主键已被占用，说明这篇文章已经通过正常同步入库了（当前这条只是占位记录）。
+      // 保留信息更完整的那条，丢掉占位记录，不要反向覆盖。
+      const occupied = await db.article.get(nextKey);
+      await db.article.delete(key);
+      if (!occupied) {
+        await db.article.put(article, nextKey);
+      }
+    }
+  });
+}
+
+/**
  * 更新文章的fakeid
  * @param url
  * @param fakeid
  */
 export async function updateArticleFakeid(url: string, fakeid: string): Promise<void> {
-  await db.transaction('rw', 'article', async () => {
-    await db.article
-      .where('link')
-      .equals(url)
-      .and(article => article.fakeid === 'SINGLE_ARTICLE_FAKEID')
-      .modify(article => {
-        article.fakeid = fakeid;
+  await rekeyArticleByLink(
+    url,
+    article => {
+      article.fakeid = fakeid;
 
-        // 标记改数据是【单篇文章下载】添加的
-        article._single = true;
-      });
-  });
+      // 标记改数据是【单篇文章下载】添加的
+      article._single = true;
+    },
+    article => article.fakeid === 'SINGLE_ARTICLE_FAKEID'
+  );
 }

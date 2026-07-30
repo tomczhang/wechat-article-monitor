@@ -32,6 +32,7 @@ samples/**/output
 
 # Credential service runtime data
 credential-service/data/
+credential-service/.venv/
 
 # AI
 .cursor

@@ -33,6 +33,7 @@ import type { Preferences } from '~/types/preferences';
 import type { AppMsgExWithFakeID } from '~/types/types';
 import type { ArticleMetadata } from '~/utils/download/types';
 import { createBooleanColumnFilterParams, createDateColumnFilterParams } from '~/utils/grid';
+import { collapseReposts } from '~/utils/repost';
 
 useHead({
   title: `文章下载 | ${websiteName}`,
@@ -349,6 +350,7 @@ function onFilterChanged(event: FilterChangedEvent) {
 
 const preferences = usePreferences();
 const hideDeleted = computed(() => (preferences.value as unknown as Preferences).hideDeleted);
+const shouldCollapseReposts = computed(() => (preferences.value as unknown as Preferences).collapseReposts);
 
 const previewArticleRef = ref<typeof PreviewArticle | null>(null);
 
@@ -389,7 +391,8 @@ async function switchTableData(fakeid: string) {
     }
   }
   await sleep(200);
-  globalRowData = articles.filter(article => (hideDeleted.value ? !article.is_deleted : true));
+  const visible = articles.filter(article => (hideDeleted.value ? !article.is_deleted : true));
+  globalRowData = shouldCollapseReposts.value ? collapseReposts(visible) : visible;
   gridApi.value?.setGridOption('rowData', globalRowData);
   loading.value = false;
 }

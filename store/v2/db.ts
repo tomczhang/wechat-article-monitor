@@ -124,4 +124,90 @@ db.version(5)
     }
   });
 
+// 评论监控曾在每轮同步时用 Date.now() 生成 aid，主键 `${fakeid}:${aid}` 每次都不同，
+// 同一篇文章被反复插入。这里按 fakeid + link 归组，一次性清掉多余的行。
+db.version(6).upgrade(async tx => {
+  try {
+    const table = tx.table('article');
+    const groups = new Map<string, { key: string; article: any }[]>();
+
+    await table.toCollection().each((article: any, cursor) => {
+      if (!article?.link) return;
+      const groupKey = `${article.fakeid}\u0000${article.link}`;
+      const list = groups.get(groupKey);
+      const entry = { key: cursor.primaryKey as string, article };
+      if (list) list.push(entry);
+      else groups.set(groupKey, [entry]);
+    });
+
+    const staleKeys: string[] = [];
+    for (const list of groups.values()) {
+      if (list.length < 2) continue;
+      list.sort((a, b) => {
+        // 优先保留正常同步进来的文章，其次保留最早写入的那条
+        const singleDiff = Number(!!a.article._single) - Number(!!b.article._single);
+        if (singleDiff !== 0) return singleDiff;
+        return (a.article.update_time ?? 0) - (b.article.update_time ?? 0);
+      });
+      for (const entry of list.slice(1)) {
+        staleKeys.push(entry.key);
+      }
+    }
+
+    if (staleKeys.length > 0) {
+      await table.bulkDelete(staleKeys);
+      console.info(`[Article v6 migration] removed ${staleKeys.length} duplicated article records`);
+    }
+  } catch (err) {
+    console.error('[Article v6 migration] dedupe failed:', err);
+  }
+});
+
+// 承接 v6：跨 link 清理评论监控留下的占位记录。
+// 微信真实的 mid 是 10 位，早期代码在 URL 缺 mid 时拿 13 位的 Date.now() 顶替，
+// 于是占位记录用短链、正常同步用长链，v6 的 fakeid+link 归组匹配不上。
+// 只有当同标题下已经存在正常同步来的文章时才删，避免误伤「只下载过单篇、从未同步过公众号」的记录。
+db.version(7).upgrade(async tx => {
+  const FAKE_APPMSGID_MIN = 1e12;
+  const SINGLE_ARTICLE_FAKEID = 'SINGLE_ARTICLE_FAKEID';
+
+  // aid 与 appmsgid 都可能残留时间戳，任一命中即视为占位记录
+  const isPlaceholder = (article: any) =>
+    (article.appmsgid ?? 0) >= FAKE_APPMSGID_MIN ||
+    Number(String(article.aid ?? '').split('_')[0]) >= FAKE_APPMSGID_MIN;
+
+  try {
+    const table = tx.table('article');
+    const entries: { key: string; article: any }[] = [];
+    await table.toCollection().each((article: any, cursor) => {
+      if (article?.title) entries.push({ key: cursor.primaryKey as string, article });
+    });
+
+    const realFakeidsByTitle = new Map<string, Set<string>>();
+    for (const { article } of entries) {
+      if (isPlaceholder(article)) continue;
+      const fakeids = realFakeidsByTitle.get(article.title);
+      if (fakeids) fakeids.add(article.fakeid);
+      else realFakeidsByTitle.set(article.title, new Set([article.fakeid]));
+    }
+
+    const staleKeys: string[] = [];
+    for (const { key, article } of entries) {
+      if (!isPlaceholder(article)) continue;
+      const fakeids = realFakeidsByTitle.get(article.title);
+      if (!fakeids) continue;
+      if (article.fakeid === SINGLE_ARTICLE_FAKEID || fakeids.has(article.fakeid)) {
+        staleKeys.push(key);
+      }
+    }
+
+    if (staleKeys.length > 0) {
+      await table.bulkDelete(staleKeys);
+      console.info(`[Article v7 migration] removed ${staleKeys.length} placeholder article records`);
+    }
+  } catch (err) {
+    console.error('[Article v7 migration] cleanup failed:', err);
+  }
+});
+
 export { db };

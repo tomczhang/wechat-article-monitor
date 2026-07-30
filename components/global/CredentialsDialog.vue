@@ -89,9 +89,7 @@
 import dayjs from 'dayjs';
 import { getArticleList, getArticleListWithCredential } from '~/apis';
 import CredentialExpiryBar from '~/components/global/CredentialExpiryBar.vue';
-import LoginModal from '~/components/modal/Login.vue';
 import toastFactory from '~/composables/toast';
-import useLoginCheck from '~/composables/useLoginCheck';
 import { CREDENTIAL_LIVE_MINUTES, isDev } from '~/config';
 import { getInfoCache, type MpAccount } from '~/store/v2/info';
 import type { ParsedCredential } from '~/types/credential';
@@ -113,15 +111,12 @@ async function pullData(fakeid: string) {
   pullArticleLoading.value = false;
 }
 
-const { checkLogin } = useLoginCheck();
-
 const credentials = useLocalStorage<ParsedCredential[]>('auto-detect-credentials:credentials', []);
 for (const item of credentials.value) {
   item.valid = Date.now() < item.timestamp + 1000 * 60 * CREDENTIAL_LIVE_MINUTES;
 }
 const pendingCredentialCount = computed(() => credentials.value.filter(c => c.valid && !c.added).length);
 const toast = toastFactory();
-const modal = useModal();
 const addingBiz = ref<string | null>(null);
 
 const serviceStatus = ref<{ running: boolean; proxyAddress: string | null; port: number }>({
@@ -306,7 +301,6 @@ onUnmounted(() => {
 
 async function addAccount(credential: ParsedCredential) {
   if (credential.added || addingBiz.value === credential.biz) return;
-  if (!checkLogin()) return;
 
   addingBiz.value = credential.biz;
   const nickname = credential.nickname || credential.biz;
@@ -326,11 +320,7 @@ async function addAccount(credential: ParsedCredential) {
     toast.success('公众号添加成功', `已成功添加公众号【${nickname}】`);
     accountEventBus.emit('account-added', { fakeid: credential.biz });
   } catch (error: any) {
-    if (error?.message === 'session expired') {
-      modal.open(LoginModal);
-    } else {
-      toast.error('添加公众号失败', error?.message || '未知错误');
-    }
+    toast.error('添加公众号失败', error?.message || '未知错误');
   } finally {
     addingBiz.value = null;
   }
