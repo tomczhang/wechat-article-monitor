@@ -3,6 +3,9 @@ export interface Preferences {
   // 隐藏已删除文章
   hideDeleted: boolean;
 
+  // 折叠同号同标题的重发文章，只显示最新一条
+  collapseReposts: boolean;
+
   // 私有代理列表
   privateProxyList: string[];
 

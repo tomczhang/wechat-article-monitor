@@ -4,6 +4,7 @@ import type { Preferences } from '~/types/preferences';
 
 const defaultOptions: Partial<Preferences> = {
   hideDeleted: true,
+  collapseReposts: true,
   privateProxyList: [],
   privateProxyAuthorization: '',
   exportConfig: {
