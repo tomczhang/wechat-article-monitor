@@ -44,6 +44,7 @@
 - **公众号订阅与文章发现**：关注列表中的公众号定时轮询，新文章自动入库、自动去重
 - **评论持续监控**：对入库文章追踪评论增减，记录每条评论的首次出现时间与被屏蔽时间
 - **统一监控面板**：所有监控任务在一个页面管理，调度状态、失败次数、最近一次执行时间一目了然
+- **重发折叠**：公众号删稿重发时微信会把每次群发都返回一遍，且不一定打删除标记。同一个号下标题相同、发布时间相差 30 分钟以内的记录只显示最新一条（纯展示层过滤，可在设置中关闭）
 - **离线可读**：抓取数据本地化存储，断网仍可浏览历史归档
 
 ### 多格式批量导出
@@ -56,9 +57,10 @@
 
 ### Credential 抓包服务
 
-- 内置基于 mitmproxy 的本地 Python 服务，自动捕获并下发微信公众平台凭据
-- 凭据剩余有效期实时显示在前端顶部条
-- 通过 WebSocket 与前端联动 (`server/api/credential/ws.ts`)，过期前主动刷新
+- 内置基于 mitmproxy 的本地 Python 服务，捕获微信客户端打开文章页时下发的凭据（`__biz` / `uin` / `key` / `pass_ticket` / `wap_sid2` / `appmsg_token`）
+- 凭据有效期约 25 分钟，剩余时间实时显示在凭据面板
+- 通过 WebSocket 与前端联动 (`server/api/credential/ws.ts`)，抓到新凭据立即推送
+- 主流程（同步文章列表、阅读量、留言、监控）全部依赖它，**无需扫码登录公众号后台**
 
 ### 部署
 
@@ -82,7 +84,7 @@
 
 - Node.js ≥ 22
 - Yarn 1.22（通过 corepack 管理）
-- Python 3.12+（仅在使用 credential 抓包服务时需要）
+- Python 3.12+（credential 抓包服务依赖，主流程必需）
 
 ### 安装与启动
 
@@ -90,20 +92,39 @@
 corepack enable && corepack prepare yarn@1.22.22 --activate
 yarn
 
+# credential 抓包服务依赖
+cd credential-service && python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt && cd ..
+
 cp .env.example .env
 yarn dev
 ```
 
-打开 <http://localhost:3000>，扫码登录公众号后台即可使用。
+mitmproxy 由 Nuxt 启动时通过 `server/plugins/credential-service.ts` 自动拉起，优先使用 `credential-service/.venv/bin/mitmdump`，找不到则回退到 PATH 中的全局 `mitmdump`。监听端口由 `CREDENTIAL_MITM_PORT` 控制。
 
-### Credential 抓包服务（可选）
+### 获取凭据
 
-```bash
-cd credential-service
-pip install -r requirements.txt
-```
+1. 打开 <http://localhost:3000>
+2. 把手机（或电脑微信）的 HTTP 代理指向 `127.0.0.1:65000`，并安装信任 mitmproxy 根证书（代理生效后访问 <http://mitm.it> 下载）
+3. 在微信客户端里打开目标公众号的任意一篇文章
+4. 回到网页，凭据面板中会出现该公众号，点「添加公众号」即可开始同步
 
-服务由 Nuxt 启动时通过 `server/plugins/credential-service.ts` 自动拉起，监听端口由 `CREDENTIAL_MITM_PORT` 控制。
+凭据约 25 分钟过期，过期后重复第 3 步续期即可。
+
+### 凭据与扫码登录的分工
+
+主流程走 Credential，不需要扫码登录公众号后台：
+
+| 功能 | Credential | 扫码登录 |
+| --- | :---: | :---: |
+| 添加公众号（凭据面板） | 必需 | 否 |
+| 同步历史文章列表 | 必需 | 否 |
+| 下载正文 HTML | 否（走代理） | 否 |
+| 阅读量 / 留言 | 必需 | 否 |
+| 新文章发现 / 评论监控 | 必需 | 否 |
+| 按名称搜索陌生公众号 | 否 | 必需 |
+| Public API (`/api/public/v1/*`) | 否 | 必需 |
+
+搜索是唯一的硬依赖，但可以绕开：只要在微信里打开过目标号的任意一篇文章，凭据面板里就会出现它，文章 URL 中的 `__biz` 就是程序内部使用的 `fakeid`。
 
 ### 生产构建
 
@@ -138,8 +159,7 @@ yarn docker:build
 ├── store/v2/              Dexie 数据模型
 ├── utils/monitor/         调度器与 poller
 ├── utils/download/        下载与导出核心
-├── credential-service/    Python mitmproxy 抓包服务
-└── openspec/              规格驱动开发文档
+└── credential-service/    Python mitmproxy 抓包服务
 ```
 
 ## 致谢
@@ -155,4 +175,4 @@ yarn docker:build
 
 本工具仅用于公开内容的本地归档与备份。通过本工具获取的微信公众号文章与评论内容，版权归原作者所有，请合理合规使用，严禁用于商业牟利、侵犯他人权益或违反平台规则的行为。
 
-本程序不会利用扫码登录的公众号进行任何形式的私有爬虫，账号仅用于服务使用者本人的内容抓取目的。
+本程序不会利用抓取到的凭据或扫码登录的账号进行任何形式的私有爬虫，凭据与账号仅在使用者本机使用，不会上传至任何第三方服务。
