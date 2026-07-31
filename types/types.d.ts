@@ -1,30 +1,6 @@
-export interface LoginAccount {
-  nickname: string;
-  avatar: string;
-  expires: string;
-  err?: string;
-}
-
 export interface BaseResp {
   err_msg: string;
   ret: number;
-}
-
-export interface StartLoginResult {
-  base_resp: BaseResp;
-}
-
-export interface GetAuthKeyResult {
-  code: number;
-  data: string;
-  msg: string;
-}
-
-export interface ScanLoginResult {
-  base_resp: BaseResp;
-  status: number;
-  acct_size: number;
-  binduin: string;
 }
 
 export interface AccountInfo {
@@ -182,9 +158,4 @@ export interface DownloadableArticle {
   date: number;
   html?: string;
   packed?: boolean;
-}
-
-export interface LogoutResponse {
-  statusCode: number;
-  statusText: string;
 }

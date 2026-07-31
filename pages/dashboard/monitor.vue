@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
-import { getAccountList } from '~/apis';
 import CommentPreviewPopover from '~/components/dashboard/CommentPreviewPopover.vue';
 import ShieldedCommentsPopover from '~/components/dashboard/ShieldedCommentsPopover.vue';
+import CredentialExpiryBar from '~/components/global/CredentialExpiryBar.vue';
 import useAccountDiscovery from '~/composables/useAccountDiscovery';
 import useCommentMonitor from '~/composables/useCommentMonitor';
+import useCredentials from '~/composables/useCredentials';
 import useMonitor from '~/composables/useMonitor';
 import { websiteName } from '~/config';
 import type { CommentMonitorTask } from '~/store/v2/commentMonitorTask';
-import type { AccountInfo } from '~/types/types';
+import type { ParsedCredential } from '~/types/credential';
 
 useHead({
   title: `文章监控 | ${websiteName}`,
 });
 
-const { monitoring, credentials } = useMonitor();
+const { monitoring } = useMonitor();
 const {
   watches,
   discovering,
@@ -41,8 +42,34 @@ const {
   stopMonitor,
   refreshTasks,
 } = useCommentMonitor();
+const { validCredentials, serviceStatus, wsConnected, start: startCredentials } = useCredentials();
 
-const validCredentials = computed(() => credentials.value.filter(c => c.valid));
+// 已在监控列表中的公众号
+const watchedFakeids = computed(() => new Set(watches.value.map(w => w.fakeid)));
+// 有效但尚未加入监控的凭证 —— 添加公众号的来源
+const addableCredentials = computed(() => validCredentials.value.filter(c => !watchedFakeids.value.has(c.biz)));
+// 空数据：既没有监控公众号，也没有可用凭证
+const isEmpty = computed(() => watches.value.length === 0 && validCredentials.value.length === 0);
+
+const proxyEndpoint = computed(() => `127.0.0.1:${serviceStatus.value.port}`);
+
+// —— 从凭证添加公众号 ——
+const showCredentialPicker = ref(false);
+const addingWatchBiz = ref<string | null>(null);
+
+async function addFromCredential(cred: ParsedCredential) {
+  if (watchedFakeids.value.has(cred.biz)) return;
+  addingWatchBiz.value = cred.biz;
+  try {
+    await addWatch({
+      fakeid: cred.biz,
+      nickname: cred.nickname || cred.biz,
+      round_head_img: cred.avatar || '',
+    });
+  } finally {
+    addingWatchBiz.value = null;
+  }
+}
 
 const fetchingCommentTaskId = ref<number | null>(null);
 const exportingTaskKey = ref('');
@@ -84,35 +111,6 @@ async function onAddManualArticle() {
   } finally {
     addingManual.value = false;
   }
-}
-
-const searchKeyword = ref('');
-const searchResults = ref<AccountInfo[]>([]);
-const searching = ref(false);
-const showSearch = ref(false);
-
-async function searchAccount() {
-  if (!searchKeyword.value.trim()) return;
-  searching.value = true;
-  try {
-    const [list] = await getAccountList(0, searchKeyword.value);
-    searchResults.value = list;
-  } catch (e) {
-    console.error(e);
-  } finally {
-    searching.value = false;
-  }
-}
-
-async function onAddAccount(account: AccountInfo) {
-  await addWatch({
-    fakeid: account.fakeid,
-    nickname: account.nickname,
-    round_head_img: account.round_head_img,
-  });
-  showSearch.value = false;
-  searchKeyword.value = '';
-  searchResults.value = [];
 }
 
 type BadgeColor = 'sky' | 'orange' | 'violet' | 'green' | 'rose' | 'gray';
@@ -164,6 +162,7 @@ function getDiscoveryHint(w: (typeof watches.value)[number]) {
 
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
+  startCredentials();
   refreshInterval = setInterval(() => {
     if (discovering.value) refreshWatches();
     if (commentMonitoring.value) refreshTasks();
@@ -182,7 +181,7 @@ onUnmounted(() => {
 
     <div class="flex flex-col h-full divide-y divide-gray-200 dark:divide-slate-700">
       <!-- 顶部状态条 -->
-      <header class="flex flex-wrap items-center justify-between gap-3 px-3 py-3">
+      <header class="flex flex-wrap items-center justify-between gap-3 px-6 py-3">
         <div class="flex items-center gap-4 text-sm">
           <!-- 公众号发现状态 -->
           <div class="flex items-center gap-1.5">
@@ -226,11 +225,22 @@ onUnmounted(() => {
             </template>
           </div>
 
-          <span v-if="monitoring" class="text-xs text-slate-400">系统运行中</span>
+          <span class="text-slate-300">|</span>
+
+          <!-- 抓包服务状态 -->
+          <div class="flex items-center gap-1.5">
+            <span
+              class="w-2 h-2 rounded-full"
+              :class="serviceStatus.running && wsConnected ? 'bg-emerald-500' : 'bg-rose-400'"
+            />
+            <span class="text-slate-500">
+              {{ serviceStatus.running && wsConnected ? '抓包服务就绪' : '抓包服务未就绪' }}
+            </span>
+          </div>
         </div>
 
         <div class="flex items-center gap-2">
-          <UButton icon="i-lucide:plus" color="black" @click="showSearch = true">
+          <UButton icon="i-lucide:plus" color="black" @click="showCredentialPicker = true">
             添加公众号
           </UButton>
         </div>
@@ -238,7 +248,61 @@ onUnmounted(() => {
 
       <!-- 主内容区 -->
       <div class="flex-1 overflow-y-auto">
-        <div class="max-w-8xl mx-auto px-6 py-6 space-y-10">
+        <div class="max-w-8xl mx-auto px-6 py-6 space-y-8">
+          <!-- 首次引导：无凭证也无监控 -->
+          <section
+            v-if="isEmpty"
+            class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden"
+          >
+            <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+              <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">开始监控前，先获取 Credential</h2>
+              <p class="text-sm text-slate-500 mt-1">
+                本工具完全依赖微信客户端文章页的 Credential 工作，无需登录公众号后台。按以下步骤即可自动捕获。
+              </p>
+            </div>
+
+            <div class="px-6 py-5 grid gap-4 md:grid-cols-2">
+              <!-- 状态卡片 -->
+              <div class="space-y-3">
+                <div class="flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-3">
+                  <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full" :class="serviceStatus.running ? 'bg-emerald-500' : 'bg-rose-400'" />
+                    <span class="text-sm font-medium">抓包服务</span>
+                  </div>
+                  <span class="text-xs text-slate-500 font-mono">
+                    {{ serviceStatus.running ? proxyEndpoint : '未启动 (需安装 mitmproxy)' }}
+                  </span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-3">
+                  <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full" :class="wsConnected ? 'bg-emerald-500' : 'bg-slate-300'" />
+                    <span class="text-sm font-medium">实时通道</span>
+                  </div>
+                  <span class="text-xs text-slate-500">{{ wsConnected ? '已连接' : '未连接' }}</span>
+                </div>
+              </div>
+
+              <!-- 步骤 -->
+              <ol class="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                <li class="flex gap-3">
+                  <span class="flex-shrink-0 w-5 h-5 rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-xs flex items-center justify-center font-mono">1</span>
+                  <span>
+                    将系统代理设为
+                    <code class="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">{{ proxyEndpoint }}</code>
+                  </span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="flex-shrink-0 w-5 h-5 rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-xs flex items-center justify-center font-mono">2</span>
+                  <span>在手机 / PC 微信中打开目标公众号的任意一篇文章</span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="flex-shrink-0 w-5 h-5 rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-xs flex items-center justify-center font-mono">3</span>
+                  <span>凭证会自动出现在下方「可用 Credential」，点击「加入监控」即可</span>
+                </li>
+              </ol>
+            </div>
+          </section>
+
           <!-- 公众号监控 -->
           <section>
             <div class="flex items-baseline justify-between mb-3">
@@ -276,7 +340,7 @@ onUnmounted(() => {
             >
               <UIcon name="i-lucide:radar" class="text-3xl text-slate-300 mb-2" />
               <p class="text-sm text-slate-500 mb-3">暂无监控公众号</p>
-              <UButton size="sm" color="black" variant="soft" @click="showSearch = true">立即添加</UButton>
+              <UButton size="sm" color="black" variant="soft" @click="showCredentialPicker = true">从 Credential 添加</UButton>
             </div>
 
             <div
@@ -595,21 +659,36 @@ onUnmounted(() => {
             >
               <UIcon name="i-lucide:info" class="text-amber-500 text-lg flex-shrink-0 mt-0.5" />
               <p class="text-xs text-slate-500 leading-relaxed">
-                暂无可用凭证，请在手机微信中打开目标公众号的文章，系统会自动捕获 Credential。
+                暂无可用凭证。请将系统代理设为
+                <code class="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">{{ proxyEndpoint }}</code>，
+                在微信中打开目标公众号的文章，系统会自动捕获 Credential。
               </p>
             </div>
 
-            <ul v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5">
+            <ul v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               <li
                 v-for="cred in validCredentials"
                 :key="cred.biz"
                 class="flex items-center gap-2 px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-sm bg-white dark:bg-slate-900"
               >
-                <img v-if="cred.avatar" :src="cred.avatar" class="w-6 h-6 rounded-full" />
-                <span class="font-medium truncate flex-1">{{ cred.nickname || cred.biz }}</span>
-                <span class="text-[11px] text-slate-400 font-mono">
-                  {{ cred.time || dayjs(cred.timestamp).format('MM-DD HH:mm') }}
-                </span>
+                <img v-if="cred.avatar" :src="cred.avatar" class="w-7 h-7 rounded-full flex-shrink-0" />
+                <div class="flex-1 min-w-0">
+                  <p class="font-medium truncate">{{ cred.nickname || cred.biz }}</p>
+                  <p class="text-[11px] text-slate-400 font-mono truncate">
+                    {{ cred.time || dayjs(cred.timestamp).format('MM-DD HH:mm') }}
+                  </p>
+                </div>
+                <UBadge v-if="watchedFakeids.has(cred.biz)" color="green" variant="subtle" size="xs">监控中</UBadge>
+                <UButton
+                  v-else
+                  size="xs"
+                  color="black"
+                  variant="soft"
+                  :loading="addingWatchBiz === cred.biz"
+                  @click="addFromCredential(cred)"
+                >
+                  加入监控
+                </UButton>
               </li>
             </ul>
           </section>
@@ -619,34 +698,53 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 搜索添加弹窗 -->
-    <UModal v-model="showSearch">
+    <!-- 添加公众号：从已抓取 Credential 选择 -->
+    <UModal v-model="showCredentialPicker">
       <div class="p-6 space-y-4">
-        <h3 class="text-lg font-semibold">添加监控公众号</h3>
-        <div class="flex gap-2">
-          <UInput
-            v-model="searchKeyword"
-            placeholder="搜索公众号名称"
-            icon="i-lucide:search"
-            class="flex-1"
-            @keyup.enter="searchAccount"
-          />
-          <UButton color="black" :loading="searching" @click="searchAccount">搜索</UButton>
+        <div>
+          <h3 class="text-lg font-semibold">添加监控公众号</h3>
+          <p class="text-sm text-slate-500 mt-1">从已抓取的有效 Credential 中选择要监控的公众号。</p>
         </div>
-        <div v-if="searchResults.length" class="space-y-1 max-h-80 overflow-y-auto">
-          <div
-            v-for="account in searchResults"
-            :key="account.fakeid"
-            class="flex items-center gap-3 p-3 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition active:scale-[0.99]"
-            @click="onAddAccount(account)"
-          >
-            <img :src="account.round_head_img" class="w-9 h-9 rounded-full object-cover" />
-            <div class="flex-1 min-w-0">
-              <p class="font-medium text-sm truncate">{{ account.nickname }}</p>
-              <p class="text-xs text-slate-500 truncate">{{ account.signature }}</p>
-            </div>
+
+        <!-- 无可添加凭证：给出抓取引导 -->
+        <div
+          v-if="addableCredentials.length === 0"
+          class="rounded-lg border border-dashed border-slate-300 dark:border-slate-600 px-4 py-5 text-sm text-slate-500 space-y-3"
+        >
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full" :class="serviceStatus.running ? 'bg-emerald-500' : 'bg-rose-400'" />
+            <span>抓包服务{{ serviceStatus.running ? '已就绪' : '未启动 (需安装 mitmproxy)' }}</span>
           </div>
+          <p class="leading-relaxed">
+            将系统代理设为
+            <code class="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">{{ proxyEndpoint }}</code>，
+            在微信中打开目标公众号的任意文章，凭证会自动出现在此处。
+            <template v-if="validCredentials.length > 0">当前所有有效凭证均已在监控中。</template>
+          </p>
         </div>
+
+        <ul v-else class="space-y-1 max-h-96 overflow-y-auto">
+          <li
+            v-for="cred in addableCredentials"
+            :key="cred.biz"
+            class="flex items-center gap-3 p-3 rounded-md border border-slate-200 dark:border-slate-700"
+          >
+            <img v-if="cred.avatar" :src="cred.avatar" class="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+            <div class="flex-1 min-w-0">
+              <p class="font-medium text-sm truncate">{{ cred.nickname || cred.biz }}</p>
+              <p class="text-xs text-slate-400 font-mono truncate">{{ cred.biz }}</p>
+            </div>
+            <CredentialExpiryBar :timestamp="cred.timestamp" class="w-32 flex-shrink-0" />
+            <UButton
+              size="xs"
+              color="black"
+              :loading="addingWatchBiz === cred.biz"
+              @click="addFromCredential(cred)"
+            >
+              加入监控
+            </UButton>
+          </li>
+        </ul>
       </div>
     </UModal>
   </div>

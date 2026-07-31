@@ -86,13 +86,10 @@
 </template>
 
 <script setup lang="ts">
-import dayjs from 'dayjs';
-import { getArticleList, getArticleListWithCredential } from '~/apis';
+import { getArticleListWithCredential } from '~/apis';
 import CredentialExpiryBar from '~/components/global/CredentialExpiryBar.vue';
-import toastFactory from '~/composables/toast';
-import { CREDENTIAL_LIVE_MINUTES, isDev } from '~/config';
-import { getInfoCache, type MpAccount } from '~/store/v2/info';
-import type { ParsedCredential } from '~/types/credential';
+import useCredentials from '~/composables/useCredentials';
+import { isDev } from '~/config';
 
 export type CredentialState = 'active' | 'inactive' | 'warning';
 
@@ -103,6 +100,8 @@ const emit = defineEmits<{
 const open = defineModel<boolean>('open', { default: false });
 const state = defineModel<CredentialState>('state', { default: 'inactive' });
 
+const { credentials, pendingCount, serviceStatus, wsConnected, addingBiz, start, addAccount } = useCredentials();
+
 const pullArticleLoading = ref(false);
 async function pullData(fakeid: string) {
   pullArticleLoading.value = true;
@@ -111,226 +110,20 @@ async function pullData(fakeid: string) {
   pullArticleLoading.value = false;
 }
 
-const credentials = useLocalStorage<ParsedCredential[]>('auto-detect-credentials:credentials', []);
-for (const item of credentials.value) {
-  item.valid = Date.now() < item.timestamp + 1000 * 60 * CREDENTIAL_LIVE_MINUTES;
-}
-const pendingCredentialCount = computed(() => credentials.value.filter(c => c.valid && !c.added).length);
-const toast = toastFactory();
-const addingBiz = ref<string | null>(null);
-
-const serviceStatus = ref<{ running: boolean; proxyAddress: string | null; port: number }>({
-  running: false,
-  proxyAddress: null,
-  port: 65000,
-});
-
 const serviceStatusColor = computed(() => {
   if (serviceStatus.value.running) return 'bg-green-500';
   return 'bg-red-400';
 });
 
-async function fetchServiceStatus() {
-  try {
-    const data = await $fetch<any>('/api/credential/status');
-    serviceStatus.value = data;
-  } catch {
-    serviceStatus.value = { running: false, proxyAddress: null, port: 65000 };
-  }
-}
-
-function parseSetCookie(setCookie: string): { appmsg_token: string; cookie: string } {
-  let appmsg_token = '';
-  const tokenMatch = setCookie.match(/appmsg_token=(?<token>[^;]+)/);
-  if (tokenMatch?.groups?.token) {
-    appmsg_token = decodeURIComponent(tokenMatch.groups.token.trim());
-  }
-
-  const cookieParts: string[] = [];
-  const entries = setCookie.split(',');
-  for (const entry of entries) {
-    const nameValue = entry.trim().split(';')[0].trim();
-    if (!nameValue || !nameValue.includes('=')) continue;
-    if (nameValue.includes('EXPIRED')) continue;
-    const name = nameValue.split('=')[0].trim();
-    if (['Path', 'Expires', 'HttpOnly', 'Secure', 'Domain', 'SameSite'].includes(name)) continue;
-    const value = nameValue.split('=').slice(1).join('=');
-    if (!value) continue;
-    cookieParts.push(nameValue);
-  }
-
-  return { appmsg_token, cookie: cookieParts.join('; ') };
-}
-
-async function refreshCredentialAddedState() {
-  const pending = credentials.value.map(async credential => {
-    const info = await getInfoCache(credential.biz);
-    credential.added = Boolean(info);
-  });
-  await Promise.allSettled(pending);
-}
-
-const { accountEventBus } = useAccountEventBus();
-accountEventBus.on((event, payload) => {
-  if (event === 'account-added') {
-    const target = credentials.value.find(item => item.biz === payload?.fakeid);
-    if (target) target.added = true;
-  } else if (event === 'account-removed') {
-    const target = credentials.value.find(item => item.biz === payload?.fakeid);
-    if (target) target.added = false;
-  }
-});
-
-interface CredentialRaw {
-  biz?: string;
-  name?: string;
-  avatar?: string;
-  url: string;
-  set_cookie: string;
-  timestamp: number;
-}
-
-async function processCredentialData(result: CredentialRaw[]) {
-  const _credentials: ParsedCredential[] = [];
-  for (const item of result) {
-    let __biz: string | null = null;
-    let uin: string | null = null;
-    let key: string | null = null;
-    let pass_ticket: string | null = null;
-
-    try {
-      const searchParams = new URL(item.url).searchParams;
-      __biz = searchParams.get('__biz');
-      uin = searchParams.get('uin');
-      key = searchParams.get('key');
-      pass_ticket = searchParams.get('pass_ticket');
-    } catch {
-      continue;
-    }
-
-    let wap_sid2: string | null = null;
-    const matchResult = item.set_cookie.match(/wap_sid2=(?<wap_sid2>.+?);/);
-    if (matchResult?.groups?.wap_sid2) {
-      wap_sid2 = matchResult.groups.wap_sid2;
-    }
-
-    const { appmsg_token, cookie } = parseSetCookie(item.set_cookie);
-
-    if (!__biz || !uin || !key || !pass_ticket || !wap_sid2) continue;
-
-    const info = await getInfoCache(__biz);
-    _credentials.push({
-      nickname: item.name || info?.nickname,
-      avatar: item.avatar || info?.round_head_img,
-      biz: __biz,
-      uin,
-      key,
-      pass_ticket,
-      wap_sid2,
-      appmsg_token,
-      cookie,
-      timestamp: item.timestamp,
-      time: dayjs(item.timestamp).format('YYYY-MM-DD HH:mm:ss'),
-      valid: Date.now() < item.timestamp + 1000 * 60 * CREDENTIAL_LIVE_MINUTES,
-      added: Boolean(info),
-    });
-  }
-  credentials.value = _credentials.sort((a, b) => b.timestamp - a.timestamp);
-}
-
-const wsConnected = ref(false);
-let _ws: WebSocket | null = null;
-let retryTimer: number | null = null;
-
-function getWsUrl() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/api/credential/ws`;
-}
-
-function connectWs() {
-  if (_ws) return;
-
-  const ws = new WebSocket(getWsUrl());
-  ws.addEventListener('open', () => {
-    wsConnected.value = true;
-    _ws = ws;
-    if (retryTimer) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
-    }
-  });
-  ws.addEventListener('message', async evt => {
-    try {
-      const result: CredentialRaw[] = JSON.parse(evt.data);
-      await processCredentialData(result);
-    } catch (e) {
-      console.warn('[credential-ws] parse error:', e);
-    }
-  });
-  ws.addEventListener('close', () => {
-    wsConnected.value = false;
-    _ws = null;
-    scheduleRetry();
-  });
-  ws.addEventListener('error', () => {
-    scheduleRetry();
-  });
-}
-
-function scheduleRetry() {
-  if (retryTimer) return;
-  retryTimer = window.setTimeout(() => {
-    retryTimer = null;
-    connectWs();
-  }, 5000);
-}
-
 onMounted(() => {
-  fetchServiceStatus();
-  refreshCredentialAddedState();
-  connectWs();
-  setInterval(fetchServiceStatus, 10000);
+  start();
 });
-
-onUnmounted(() => {
-  if (retryTimer) {
-    clearTimeout(retryTimer);
-    retryTimer = null;
-  }
-});
-
-async function addAccount(credential: ParsedCredential) {
-  if (credential.added || addingBiz.value === credential.biz) return;
-
-  addingBiz.value = credential.biz;
-  const nickname = credential.nickname || credential.biz;
-  const account: MpAccount = {
-    fakeid: credential.biz,
-    completed: false,
-    count: 0,
-    articles: 0,
-    total_count: 0,
-    nickname: credential.nickname,
-    round_head_img: credential.avatar,
-  };
-
-  try {
-    await getArticleList(account, 0);
-    credential.added = true;
-    toast.success('公众号添加成功', `已成功添加公众号【${nickname}】`);
-    accountEventBus.emit('account-added', { fakeid: credential.biz });
-  } catch (error: any) {
-    toast.error('添加公众号失败', error?.message || '未知错误');
-  } finally {
-    addingBiz.value = null;
-  }
-}
 
 watchEffect(() => {
   state.value = wsConnected.value ? 'active' : 'inactive';
 });
 
 watchEffect(() => {
-  emit('update:pendingCount', pendingCredentialCount.value);
+  emit('update:pendingCount', pendingCount.value);
 });
 </script>

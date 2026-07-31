@@ -35,7 +35,7 @@ export default function useCommentMonitor() {
   }
 
   function isCredentialExpiredError(error: Error) {
-    return /未登录或登录已过期|session expired/i.test(error.message);
+    return /Credential|未检测到|已失效|未登录或登录已过期|session expired/i.test(error.message);
   }
 
   async function refreshTasks() {
@@ -111,7 +111,10 @@ export default function useCommentMonitor() {
       toast.error('评论监控失败', `${taskName}${error.message}`);
       if (isCredentialExpiredError(error)) {
         stopMonitor();
-        toast.warning('评论监控已停止', '检测到登录已过期，请重新扫码登录后再恢复监控');
+        toast.warning(
+          '评论监控已停止',
+          '检测到 Credential 已失效，请在微信中重新打开被监控公众号的文章以刷新凭证后再恢复监控'
+        );
       }
       await refreshTasks();
     });

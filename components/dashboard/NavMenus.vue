@@ -14,7 +14,6 @@ const items = ref<NavItem[]>([
   { name: '合集下载', icon: 'i-lucide:library-big', href: '/dashboard/album' },
   { name: '文章监控', icon: 'i-lucide:radar', href: '/dashboard/monitor' },
   { name: '公共代理', icon: 'i-lucide:globe', href: '/dashboard/proxy' },
-  { name: 'API', icon: 'i-lucide:cable', href: '/dashboard/api' },
   { name: '设置', icon: 'i-lucide:settings', href: '/dashboard/settings' },
   // { name: '技术支持 & 赞助', icon: 'i-lucide:heart-handshake', href: '/dashboard/support' },
 ]);

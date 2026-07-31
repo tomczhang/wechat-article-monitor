@@ -1,14 +1,11 @@
 import { request } from '#shared/utils/request';
-import { ACCOUNT_LIST_PAGE_SIZE } from '~/config';
 import { updateArticleCache } from '~/store/v2/article';
 import { type MpAccount, updateLastUpdateTime } from '~/store/v2/info';
 import type { CommentResponse } from '~/types/comment';
 import type { ProfileGetMsgResponse } from '~/types/profile_getmsg';
-import type { AccountInfo, AppMsgEx, SearchBizResponse } from '~/types/types';
+import type { AppMsgEx } from '~/types/types';
 import { findValidCredential } from '~/utils/credentials';
 import { convertProfileGetMsgResponse, parseProfileGetMsgList } from '~/utils/profile-getmsg';
-
-const loginAccount = useLoginAccount();
 
 export class CredentialRequiredError extends Error {
   constructor(reason?: string) {
@@ -72,34 +69,6 @@ export async function getArticleList(
   }
 
   return [articles, completed, publishPage.total_count, nextBegin];
-}
-
-/**
- * 获取公众号列表
- * @param begin
- * @param keyword
- */
-export async function getAccountList(begin = 0, keyword = ''): Promise<[AccountInfo[], boolean]> {
-  const resp = await request<SearchBizResponse>('/api/web/mp/searchbiz', {
-    query: {
-      begin: begin,
-      size: ACCOUNT_LIST_PAGE_SIZE,
-      keyword: keyword,
-    },
-  });
-
-  if (resp.base_resp.ret === 0) {
-    // 公众号判断是否结束的逻辑与文章不太一样
-    // 当第一页的结果就少于5个则结束，否则只有当搜索结果为空才表示结束
-    const isCompleted = begin === 0 ? resp.total < ACCOUNT_LIST_PAGE_SIZE : resp.total === 0;
-
-    return [resp.list, isCompleted];
-  } else if (resp.base_resp.ret === 200003 || resp.base_resp.err_msg?.includes('未登录或登录已过期')) {
-    loginAccount.value = null;
-    throw new Error('session expired');
-  } else {
-    throw new Error(`${resp.base_resp.ret}:${resp.base_resp.err_msg}`);
-  }
 }
 
 /**
