@@ -2,6 +2,7 @@
   <div class="flex">
     <!-- 左侧边栏 -->
     <SideBar />
+    <CredentialGateModal />
 
     <div class="flex flex-col flex-1 overflow-hidden h-screen">
       <!-- 顶部操作栏 -->
@@ -23,4 +24,12 @@
 <script setup lang="ts">
 import GlobalActions from '~/components/dashboard/Actions.vue';
 import SideBar from '~/components/dashboard/SideBar.vue';
+import CredentialGateModal from '~/components/global/CredentialGateModal.vue';
+import useCredentialGate from '~/composables/useCredentialGate';
+
+const { initialize } = useCredentialGate();
+
+onMounted(() => {
+  initialize();
+});
 </script>

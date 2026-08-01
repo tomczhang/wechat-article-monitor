@@ -1,7 +1,7 @@
 /**
  * Credential 抓包能力 facade。
  *
- * 将原先散落在 `components/global/CredentialsDialog.vue` 中的逻辑集中为模块级单例：
+ * 将 Credential 抓取与账号落地逻辑集中为模块级单例：
  * - 通过 WebSocket (`/api/credential/ws`) 接收 mitmproxy 抓取的凭证并解析、落地到 localStorage
  * - 轮询抓包服务状态 (`/api/credential/status`)
  * - 提供将某个凭证对应公众号加入本地库的 `addAccount`
@@ -19,6 +19,18 @@ export interface CredentialServiceStatus {
   running: boolean;
   proxyAddress: string | null;
   port: number;
+  upstreamProxy?: string | null;
+  credentialCount?: number;
+  systemProxy?: {
+    supported: boolean;
+    managed: boolean;
+    consent: boolean;
+    networkService: string | null;
+    upstreamProxy: string | null;
+    mitmProxy: string;
+    confirmationToken: string | null;
+    error: string | null;
+  };
 }
 
 interface CredentialRaw {
@@ -40,6 +52,8 @@ const serviceStatus = ref<CredentialServiceStatus>({
   proxyAddress: null,
   port: 65000,
 });
+const statusReady = ref(false);
+const statusError = ref<string | null>(null);
 
 let _ws: WebSocket | null = null;
 let retryTimer: number | null = null;
@@ -123,12 +137,24 @@ async function processCredentialData(result: CredentialRaw[]) {
   credentials.value = _credentials.sort((a, b) => b.timestamp - a.timestamp);
 }
 
+function refreshValidity() {
+  const expiresIn = 1000 * 60 * CREDENTIAL_LIVE_MINUTES;
+  for (const credential of credentials.value) {
+    credential.valid = Date.now() < credential.timestamp + expiresIn;
+  }
+}
+
 async function fetchServiceStatus() {
   try {
     const data = await $fetch<CredentialServiceStatus>('/api/credential/status');
     serviceStatus.value = data;
-  } catch {
+    statusError.value = null;
+  } catch (error: any) {
     serviceStatus.value = { running: false, proxyAddress: null, port: 65000 };
+    statusError.value = error?.data?.statusMessage || error?.message || 'Credential 服务状态获取失败';
+  } finally {
+    refreshValidity();
+    statusReady.value = true;
   }
 }
 
@@ -253,10 +279,13 @@ export default function useCredentials() {
     validCredentials,
     pendingCount,
     serviceStatus,
+    statusReady,
+    statusError,
     wsConnected,
     addingBiz,
     start,
     addAccount,
     refreshAddedState,
+    refreshServiceStatus: fetchServiceStatus,
   };
 }

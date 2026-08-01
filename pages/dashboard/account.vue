@@ -1,23 +1,14 @@
 <script setup lang="ts">
-import type {
-  ColDef,
-  GetRowIdParams,
-  GridApi,
-  GridOptions,
-  GridReadyEvent,
-  ICellRendererParams,
-  SelectionChangedEvent,
-  ValueGetterParams,
-} from 'ag-grid-community';
+import type { GetRowIdParams, GridApi, GridOptions, GridReadyEvent, SelectionChangedEvent } from 'ag-grid-community';
 import { AgGridVue } from 'ag-grid-vue3';
 import { defu } from 'defu';
-import { formatTimeStamp } from '#shared/utils/helpers';
-import { CredentialRequiredError, getArticleList } from '~/apis';
-import GridAccountActions from '~/components/grid/AccountActions.vue';
-import GridLoadProgress from '~/components/grid/LoadProgress.vue';
+import { getArticleList } from '~/apis';
 import ConfirmModal from '~/components/modal/Confirm.vue';
+import CredentialAccountPicker from '~/components/modal/CredentialAccountPicker.vue';
 import toastFactory from '~/composables/toast';
-import { IMAGE_PROXY, websiteName } from '~/config';
+import useAccountGridColumns from '~/composables/useAccountGridColumns';
+import useCredentialGate from '~/composables/useCredentialGate';
+import { websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
 import { deleteAccountData } from '~/store/v2';
 import { getArticleCache, hitCache } from '~/store/v2/article';
@@ -25,7 +16,6 @@ import { getAllInfo, getInfoCache, importMpAccounts, type MpAccount } from '~/st
 import type { AccountManifest } from '~/types/account';
 import type { Preferences } from '~/types/preferences';
 import { exportAccountJsonFile } from '~/utils/exporter';
-import { createBooleanColumnFilterParams, createDateColumnFilterParams } from '~/utils/grid';
 
 useHead({
   title: `公众号管理 | ${websiteName}`,
@@ -52,9 +42,11 @@ accountEventBus.on(event => {
   }
 });
 
-const credentialsDialogOpen = useState<boolean>('credentials-dialog-open', () => false);
-function addAccount() {
-  credentialsDialogOpen.value = true;
+const { requireCredential } = useCredentialGate();
+async function addAccount() {
+  if (await requireCredential()) {
+    modal.open(CredentialAccountPicker);
+  }
 }
 
 // 表示同步过程中是否执行了取消操作
@@ -143,9 +135,6 @@ async function loadAccountArticle(account: MpAccount, loadMore = true) {
       syncingRowId.value = null;
       isSyncing.value = false;
 
-      if (e instanceof CredentialRequiredError) {
-        credentialsDialogOpen.value = true;
-      }
       reject(e);
     });
   });
@@ -169,155 +158,32 @@ async function loadSelectedAccountArticle() {
 
 let globalRowData: MpAccount[] = [];
 
-const columnDefs = ref<ColDef[]>([
-  {
-    colId: 'fakeid',
-    headerName: 'fakeid',
-    field: 'fakeid',
-    cellDataType: 'text',
-    filter: 'agTextColumnFilter',
-    minWidth: 200,
-    cellClass: 'font-mono',
-    initialHide: true,
+const columnDefs = useAccountGridColumns({
+  isDeleting,
+  isSyncing,
+  syncingRowId,
+  onSync: params => {
+    isCanceled.value = false;
+    loadAccountArticle(params.data)
+      .then(() => {
+        const rangeHint = isSyncAll() ? '' : `（同步范围：${getSyncRangeLabel()}）`;
+        toast.success('同步完成', `公众号【${params.data.nickname}】的文章已同步完毕${rangeHint}`);
+      })
+      .catch(e => {
+        toast.error('同步失败', e.message);
+      });
   },
-  {
-    colId: 'round_head_img',
-    headerName: '头像',
-    field: 'round_head_img',
-    sortable: false,
-    filter: false,
-    cellRenderer: (params: ICellRendererParams) => {
-      return `<img alt="" src="${IMAGE_PROXY + params.value}" style="height: 30px; width: 30px; object-fit: cover; border: 1px solid #e5e7eb; border-radius: 100%;" />`;
-    },
-    cellClass: 'flex justify-center items-center',
-    minWidth: 80,
-  },
-  {
-    colId: 'nickname',
-    headerName: '名称',
-    field: 'nickname',
-    cellDataType: 'text',
-    filter: 'agTextColumnFilter',
-    tooltipField: 'nickname',
-    minWidth: 200,
-  },
-  {
-    colId: 'create_time',
-    headerName: '添加时间',
-    field: 'create_time',
-    valueFormatter: p => (p.value ? formatTimeStamp(p.value) : ''),
-    filter: 'agDateColumnFilter',
-    filterParams: createDateColumnFilterParams(),
-    filterValueGetter: (params: ValueGetterParams) => {
-      return new Date(params.getValue('create_time') * 1000);
-    },
-    sort: 'desc',
-    minWidth: 180,
-    initialHide: true,
-    cellClass: 'flex justify-center items-center font-mono',
-  },
-  {
-    colId: 'update_time',
-    headerName: '最后同步时间',
-    field: 'update_time',
-    valueFormatter: p => (p.value ? formatTimeStamp(p.value) : ''),
-    filter: 'agDateColumnFilter',
-    filterParams: createDateColumnFilterParams(),
-    filterValueGetter: (params: ValueGetterParams) => {
-      return new Date(params.getValue('update_time') * 1000);
-    },
-    minWidth: 180,
-    cellClass: 'flex justify-center items-center font-mono',
-  },
-  {
-    colId: 'total_count',
-    headerName: '消息总数',
-    field: 'total_count',
-    cellDataType: 'number',
-    cellRenderer: 'agAnimateShowChangeCellRenderer',
-    filter: 'agNumberColumnFilter',
-    cellClass: 'flex justify-center items-center font-mono',
-    minWidth: 150,
-  },
-  {
-    colId: 'count',
-    headerName: '已同步消息数',
-    field: 'count',
-    cellDataType: 'number',
-    cellRenderer: 'agAnimateShowChangeCellRenderer',
-    filter: 'agNumberColumnFilter',
-    cellClass: 'flex justify-center items-center font-mono',
-    minWidth: 180,
-  },
-  {
-    colId: 'articles',
-    headerName: '已同步文章数',
-    field: 'articles',
-    cellDataType: 'number',
-    cellRenderer: 'agAnimateShowChangeCellRenderer',
-    filter: 'agNumberColumnFilter',
-    cellClass: 'flex justify-center items-center font-mono',
-    minWidth: 180,
-    initialHide: true,
-  },
-  {
-    colId: 'load_percent',
-    headerName: '同步进度',
-    valueGetter: params => (params.data.total_count === 0 ? 0 : params.data.count / params.data.total_count),
-    cellDataType: 'number',
-    cellRenderer: GridLoadProgress,
-    filter: 'agNumberColumnFilter',
-    minWidth: 200,
-  },
-  {
-    colId: 'completed',
-    headerName: '是否同步完成',
-    field: 'completed',
-    cellDataType: 'boolean',
-    filter: 'agSetColumnFilter',
-    filterParams: createBooleanColumnFilterParams('已同步完成', '未同步完成'),
-    cellClass: 'flex justify-center items-center',
-    headerClass: 'justify-center',
-    minWidth: 200,
-  },
-  {
-    colId: 'action',
-    headerName: '操作',
-    field: 'fakeid',
-    sortable: false,
-    filter: false,
-    cellRenderer: GridAccountActions,
-    cellRendererParams: {
-      onSync: (params: ICellRendererParams) => {
-        isCanceled.value = false;
-        loadAccountArticle(params.data)
-          .then(() => {
-            const rangeHint = isSyncAll() ? '' : `（同步范围：${getSyncRangeLabel()}）`;
-            toast.success('同步完成', `公众号【${params.data.nickname}】的文章已同步完毕${rangeHint}`);
-          })
-          .catch(e => {
-            toast.error('同步失败', e.message);
-          });
-      },
-      onStop: (params: ICellRendererParams) => {
-        isCanceled.value = true;
-        if (syncTimer.value) {
-          window.clearTimeout(syncTimer.value);
-          syncTimer.value = null;
-        }
+  onStop: () => {
+    isCanceled.value = true;
+    if (syncTimer.value) {
+      window.clearTimeout(syncTimer.value);
+      syncTimer.value = null;
+    }
 
-        syncingRowId.value = null;
-        isSyncing.value = false;
-      },
-      isDeleting: isDeleting,
-      isSyncing: isSyncing,
-      syncingRowId: syncingRowId,
-    },
-    cellClass: 'flex justify-center items-center',
-    maxWidth: 100,
-    pinned: 'right',
+    syncingRowId.value = null;
+    isSyncing.value = false;
   },
-]);
+});
 
 // 注意，`defu`函数最左边的参数优先级最高
 const gridOptions: GridOptions = defu(
