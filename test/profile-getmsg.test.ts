@@ -8,8 +8,8 @@ function makeResponse(): ProfileGetMsgResponse {
     ret: 0,
     errmsg: 'ok',
     can_msg_continue: 1,
-    msg_count: 2,
-    next_offset: 2,
+    msg_count: 3,
+    next_offset: 3,
     real_type: 0,
     use_video_tab: 1,
     video_count: 0,
@@ -41,6 +41,14 @@ function makeResponse(): ProfileGetMsgResponse {
             del_flag: 99,
           },
         },
+        {
+          comm_msg_info: { id: 1003, datetime: 1785806100 },
+          app_msg_ext_info: {
+            title: 'missing flag',
+            content_url: 'https://mp.weixin.qq.com/s?mid=2247485220&idx=1',
+            cover: 'https://example.com/missing.jpg',
+          },
+        },
       ],
     }),
   };
@@ -60,6 +68,7 @@ test('maps profile deletion flags and preserves their source', () => {
       { title: 'normal', deleted: false, source: 'profile_ext', rawFlag: 1 },
       { title: 'deleted child', deleted: true, source: 'profile_ext', rawFlag: 4 },
       { title: 'unknown flag', deleted: false, source: 'profile_ext', rawFlag: 99 },
+      { title: 'missing flag', deleted: false, source: 'profile_ext', rawFlag: undefined },
     ]
   );
 });

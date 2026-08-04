@@ -1,13 +1,14 @@
 type MutableArticle = Record<string, unknown> & {
   is_deleted?: boolean;
   _source?: string;
+  _profile_del_flag?: number;
 };
 
 export function isLegacyProfileArticle(article: MutableArticle): boolean {
   const cover = article.cover;
   const hasInvertedDeletionState =
-    (article.is_deleted === true && article.copyright_stat === 11 && article.copyright_type === 11) ||
-    (article.is_deleted === false && article.copyright_stat === 100 && article.copyright_type === 100);
+    (article._profile_del_flag === 1 && article.is_deleted === true) ||
+    (article._profile_del_flag === 4 && article.is_deleted === false);
 
   return (
     article._source === undefined &&
@@ -33,7 +34,7 @@ export function isLegacyProfileArticle(article: MutableArticle): boolean {
 export function migrateLegacyProfileArticleDeletion(article: MutableArticle): boolean {
   if (!isLegacyProfileArticle(article)) return false;
 
-  article.is_deleted = article.copyright_stat === 100;
+  article.is_deleted = article._profile_del_flag === 4;
   article._source = 'profile_ext';
   return true;
 }

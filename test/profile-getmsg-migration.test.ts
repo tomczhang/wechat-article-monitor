@@ -25,33 +25,39 @@ function legacyProfileArticle(isDeleted: boolean, copyrightStat: number): Record
   };
 }
 
-test('repairs both legacy profile deletion states', () => {
-  const normal = { ...legacyProfileArticle(true, 11), _status: '' };
-  const deleted = legacyProfileArticle(false, 100);
+test('repairs inverted profile deletion states only when the raw flags were persisted', () => {
+  const normal = { ...legacyProfileArticle(true, 11), _profile_del_flag: 1, _status: '' };
+  const deleted = { ...legacyProfileArticle(false, 100), _profile_del_flag: 4 };
 
   assert.equal(migrateLegacyProfileArticleDeletion(normal), true);
   assert.equal(normal.is_deleted, false);
   assert.equal(normal._source, 'profile_ext');
-  assert.equal(normal._profile_del_flag, undefined);
+  assert.equal(normal._profile_del_flag, 1);
 
   assert.equal(migrateLegacyProfileArticleDeletion(deleted), true);
   assert.equal(deleted.is_deleted, true);
   assert.equal(deleted._source, 'profile_ext');
-  assert.equal(deleted._profile_del_flag, undefined);
+  assert.equal(deleted._profile_del_flag, 4);
 });
 
 test('leaves ambiguous, corrected, and other-source records unchanged', () => {
-  const single = { ...legacyProfileArticle(false, 100), _single: true };
-  const publisher = legacyProfileArticle(false, 1);
-  const unknownFlag = legacyProfileArticle(false, 11);
-  const correctedNormal = legacyProfileArticle(false, 11);
-  const correctedDeleted = legacyProfileArticle(true, 100);
-  const downloaded = { ...legacyProfileArticle(true, 11), _status: '正常' };
-  const alreadyMigrated = { ...legacyProfileArticle(false, 100), _source: 'profile_ext' as const };
+  const single = { ...legacyProfileArticle(false, 100), _profile_del_flag: 4, _single: true };
+  const publisher = legacyProfileArticle(true, 11);
+  const missingFlag = legacyProfileArticle(false, 100);
+  const unknownFlag = { ...legacyProfileArticle(false, 100), _profile_del_flag: 99 };
+  const correctedNormal = { ...legacyProfileArticle(false, 11), _profile_del_flag: 1 };
+  const correctedDeleted = { ...legacyProfileArticle(true, 100), _profile_del_flag: 4 };
+  const downloaded = { ...legacyProfileArticle(true, 11), _profile_del_flag: 1, _status: '正常' };
+  const alreadyMigrated = {
+    ...legacyProfileArticle(false, 100),
+    _profile_del_flag: 4,
+    _source: 'profile_ext' as const,
+  };
 
   for (const article of [
     single,
     publisher,
+    missingFlag,
     unknownFlag,
     correctedNormal,
     correctedDeleted,

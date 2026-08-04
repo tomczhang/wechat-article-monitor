@@ -212,7 +212,7 @@ db.version(7).upgrade(async tx => {
 });
 
 // profile_ext 历史消息的 del_flag 语义曾被写反：1 是正常，4 是已删除或不可访问。
-// 只纠正能明确识别为旧 profile_ext 转换结果的记录，其他来源保持不变。
+// 只纠正已经保存原始 flag 的记录；没有来源证据的旧缓存保持不变，等待后续同步覆盖。
 db.version(8).upgrade(async tx => {
   try {
     const table = tx.table('article');
