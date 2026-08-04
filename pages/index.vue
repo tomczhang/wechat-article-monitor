@@ -1,7 +1,7 @@
 <script setup lang="ts">
-navigateTo('/dashboard/account');
+await navigateTo('/dashboard/article', { replace: true });
 </script>
 
 <template>
-  <div class="flex justify-center items-center w-full h-full">loading...</div>
+  <div class="flex h-full w-full items-center justify-center">正在进入文章下载…</div>
 </template>

@@ -4,16 +4,22 @@
  * 将 Credential 抓取与账号落地逻辑集中为模块级单例：
  * - 通过 WebSocket (`/api/credential/ws`) 接收 mitmproxy 抓取的凭证并解析、落地到 localStorage
  * - 轮询抓包服务状态 (`/api/credential/status`)
- * - 提供将某个凭证对应公众号加入本地库的 `addAccount`
+ * - 将 Credential 与公众号缓存合并，并为首次出现的公众号自动同步最新一页
  *
  * 自登录机制移除后，本 composable 是获取「可用公众号」的唯一来源。
  */
 import dayjs from 'dayjs';
 import { getArticleList } from '~/apis';
-import toastFactory from '~/composables/toast';
 import { CREDENTIAL_LIVE_MINUTES } from '~/config';
-import { getInfoCache, type MpAccount } from '~/store/v2/info';
+import { getAllInfo, type MpAccount } from '~/store/v2/info';
 import type { ParsedCredential } from '~/types/credential';
+import { createAsyncMutex, createCoalescedSerialRunner, runCredentialInitialSyncAttempt } from '~/utils/account-sync';
+import {
+  buildCredentialAccounts,
+  createCredentialAccountSeed,
+  mergeCredentialHistory,
+  shouldAutoSyncCredential,
+} from '~/utils/credential-accounts';
 
 export interface CredentialServiceStatus {
   running: boolean;
@@ -54,12 +60,17 @@ const serviceStatus = ref<CredentialServiceStatus>({
 });
 const statusReady = ref(false);
 const statusError = ref<string | null>(null);
+const accountInfos = ref<MpAccount[]>([]);
+const autoSyncingBiz = ref<string | null>(null);
+const autoSyncErrors = ref<Record<string, string>>({});
+const activeAccountOperation = ref<{ type: 'auto-sync' | 'manual-sync' | 'delete'; biz: string } | null>(null);
 
 let _ws: WebSocket | null = null;
 let retryTimer: number | null = null;
 let statusTimer: number | null = null;
 let started = false;
-let eventBusBound = false;
+const attemptedAutoSync = new Set<string>();
+const accountOperationMutex = createAsyncMutex();
 
 // 初始化时按当前时间重算一次有效性
 for (const item of credentials.value) {
@@ -91,6 +102,7 @@ function parseSetCookie(setCookie: string): { appmsg_token: string; cookie: stri
 
 async function processCredentialData(result: CredentialRaw[]) {
   const _credentials: ParsedCredential[] = [];
+  const infoByBiz = new Map(accountInfos.value.map(info => [info.fakeid, info]));
   for (const item of result) {
     let __biz: string | null = null;
     let uin: string | null = null;
@@ -117,7 +129,7 @@ async function processCredentialData(result: CredentialRaw[]) {
 
     if (!__biz || !uin || !key || !pass_ticket || !wap_sid2) continue;
 
-    const info = await getInfoCache(__biz);
+    const info = infoByBiz.get(__biz);
     _credentials.push({
       nickname: item.name || info?.nickname,
       avatar: item.avatar || info?.round_head_img,
@@ -131,10 +143,12 @@ async function processCredentialData(result: CredentialRaw[]) {
       timestamp: item.timestamp,
       time: dayjs(item.timestamp).format('YYYY-MM-DD HH:mm:ss'),
       valid: Date.now() < item.timestamp + 1000 * 60 * CREDENTIAL_LIVE_MINUTES,
-      added: Boolean(info),
     });
   }
-  credentials.value = _credentials.sort((a, b) => b.timestamp - a.timestamp);
+  credentials.value = mergeCredentialHistory(credentials.value, _credentials);
+  refreshValidity();
+  await nextTick();
+  await reconcileCredentialAccounts();
 }
 
 function refreshValidity() {
@@ -201,91 +215,115 @@ function connectWs() {
   });
 }
 
-async function refreshAddedState() {
-  const pending = credentials.value.map(async credential => {
-    const info = await getInfoCache(credential.biz);
-    credential.added = Boolean(info);
-  });
-  await Promise.allSettled(pending);
+async function refreshAccountInfos() {
+  accountInfos.value = await getAllInfo();
 }
 
+function markCredentialInitialized(biz: string) {
+  credentials.value = credentials.value.map(credential =>
+    credential.biz === biz ? { ...credential, initialized: true } : credential
+  );
+}
+
+function clearAutoSyncError(biz: string) {
+  const nextErrors = { ...autoSyncErrors.value };
+  delete nextErrors[biz];
+  autoSyncErrors.value = nextErrors;
+}
+
+async function runAccountOperation<T>(
+  type: 'auto-sync' | 'manual-sync' | 'delete',
+  biz: string,
+  task: () => Promise<T>
+): Promise<T> {
+  return accountOperationMutex.runExclusive(async () => {
+    activeAccountOperation.value = { type, biz };
+    try {
+      return await task();
+    } finally {
+      activeAccountOperation.value = null;
+    }
+  });
+}
+
+async function autoSyncCredential(snapshot: ParsedCredential) {
+  const current = credentials.value.find(item => item.biz === snapshot.biz);
+  if (!current || !shouldAutoSyncCredential(current) || attemptedAutoSync.has(snapshot.biz)) return;
+
+  await runAccountOperation('auto-sync', snapshot.biz, async () => {
+    const credential = credentials.value.find(item => item.biz === snapshot.biz);
+    if (!credential || !shouldAutoSyncCredential(credential) || attemptedAutoSync.has(snapshot.biz)) return;
+
+    attemptedAutoSync.add(credential.biz);
+    autoSyncingBiz.value = credential.biz;
+    try {
+      const info = accountInfos.value.find(item => item.fakeid === credential.biz);
+      await runCredentialInitialSyncAttempt({
+        markAttempt: () => markCredentialInitialized(credential.biz),
+        waitForPersistence: async () => {
+          await nextTick();
+        },
+        sync: async () => {
+          await getArticleList(createCredentialAccountSeed(credential, info), 0);
+        },
+      });
+      clearAutoSyncError(credential.biz);
+      await refreshAccountInfos();
+    } catch (error: any) {
+      autoSyncErrors.value = {
+        ...autoSyncErrors.value,
+        [credential.biz]: error?.message || '首次同步失败',
+      };
+      console.error(`[credential] failed to auto-sync ${credential.biz}:`, error);
+    } finally {
+      autoSyncingBiz.value = null;
+    }
+  });
+}
+
+async function performCredentialReconciliation() {
+  await refreshAccountInfos();
+  for (const credential of credentials.value) {
+    await autoSyncCredential(credential);
+  }
+}
+
+const reconcileCredentialAccounts = createCoalescedSerialRunner(performCredentialReconciliation);
+
 export default function useCredentials() {
-  const toast = toastFactory();
-  const { accountEventBus } = useAccountEventBus();
-
   const validCredentials = computed(() => credentials.value.filter(c => c.valid));
-  const pendingCount = computed(() => credentials.value.filter(c => c.valid && !c.added).length);
-
-  const addingBiz = ref<string | null>(null);
+  const credentialAccounts = computed(() => buildCredentialAccounts(credentials.value, accountInfos.value));
 
   /** 启动抓包状态订阅（幂等，多个组件共享同一连接） */
   function start() {
-    if (!eventBusBound) {
-      eventBusBound = true;
-      accountEventBus.on((event, payload) => {
-        if (event === 'account-added') {
-          const target = credentials.value.find(item => item.biz === payload?.fakeid);
-          if (target) target.added = true;
-        } else if (event === 'account-removed') {
-          const target = credentials.value.find(item => item.biz === payload?.fakeid);
-          if (target) target.added = false;
-        }
-      });
-    }
-
     if (started) return;
     started = true;
     fetchServiceStatus();
-    refreshAddedState();
+    refreshValidity();
+    reconcileCredentialAccounts().catch(error => {
+      console.error('[credential] failed to initialize accounts:', error);
+    });
     connectWs();
     statusTimer = window.setInterval(fetchServiceStatus, 10000);
-  }
-
-  /**
-   * 将某个凭证对应的公众号加入本地库（拉取一次文章列表触发落地）。
-   * @returns 是否成功
-   */
-  async function addAccount(credential: ParsedCredential): Promise<boolean> {
-    if (credential.added || addingBiz.value === credential.biz) return false;
-
-    addingBiz.value = credential.biz;
-    const nickname = credential.nickname || credential.biz;
-    const account: MpAccount = {
-      fakeid: credential.biz,
-      completed: false,
-      count: 0,
-      articles: 0,
-      total_count: 0,
-      nickname: credential.nickname,
-      round_head_img: credential.avatar,
-    };
-
-    try {
-      await getArticleList(account, 0);
-      credential.added = true;
-      toast.success('公众号添加成功', `已成功添加公众号【${nickname}】`);
-      accountEventBus.emit('account-added', { fakeid: credential.biz });
-      return true;
-    } catch (error: any) {
-      toast.error('添加公众号失败', error?.message || '未知错误');
-      return false;
-    } finally {
-      addingBiz.value = null;
-    }
   }
 
   return {
     credentials,
     validCredentials,
-    pendingCount,
+    credentialAccounts,
+    accountInfos,
     serviceStatus,
     statusReady,
     statusError,
     wsConnected,
-    addingBiz,
+    autoSyncingBiz,
+    autoSyncErrors,
+    activeAccountOperation,
     start,
-    addAccount,
-    refreshAddedState,
+    clearAutoSyncError,
+    markCredentialInitialized,
+    runAccountOperation,
+    refreshAccountInfos,
     refreshServiceStatus: fetchServiceStatus,
   };
 }
