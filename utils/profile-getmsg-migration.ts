@@ -1,15 +1,19 @@
 type MutableArticle = Record<string, unknown> & {
   is_deleted?: boolean;
   _source?: string;
-  _profile_del_flag?: number;
 };
 
 export function isLegacyProfileArticle(article: MutableArticle): boolean {
   const cover = article.cover;
+  const hasInvertedDeletionState =
+    (article.is_deleted === true && article.copyright_stat === 11 && article.copyright_type === 11) ||
+    (article.is_deleted === false && article.copyright_stat === 100 && article.copyright_type === 100);
+
   return (
     article._source === undefined &&
     article._single !== true &&
-    typeof article.is_deleted === 'boolean' &&
+    (article._status === undefined || article._status === '') &&
+    hasInvertedDeletionState &&
     article.album_id === '' &&
     Array.isArray(article.appmsg_album_infos) &&
     article.appmsg_album_infos.length === 0 &&
@@ -29,9 +33,7 @@ export function isLegacyProfileArticle(article: MutableArticle): boolean {
 export function migrateLegacyProfileArticleDeletion(article: MutableArticle): boolean {
   if (!isLegacyProfileArticle(article)) return false;
 
-  const oldDeleted = article.is_deleted === true;
-  article.is_deleted = !oldDeleted;
+  article.is_deleted = article.copyright_stat === 100;
   article._source = 'profile_ext';
-  article._profile_del_flag = oldDeleted ? 1 : 4;
   return true;
 }

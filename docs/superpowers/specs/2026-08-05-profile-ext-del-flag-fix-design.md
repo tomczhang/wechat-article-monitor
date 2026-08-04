@@ -38,19 +38,22 @@
 新增 Dexie v8 升级，只处理没有 `_source` 且能保守识别为旧版 `profile_ext` 转换结果的记录。识别和修正逻辑提取为无数据库依赖的纯函数，供迁移和单元测试共用。记录必须同时满足：
 
 - 记录不是单篇下载或评论监控占位记录（`_single` 不为真）；
+- 记录尚未进入下载流程（`_status` 为空或缺失）；
 - `album_id === ''` 且 `appmsg_album_infos` 是空数组；
 - `ban_flag`、`checking`、`mediaapi_publish_status` 均为 `0`；
 - `create_time === update_time`；
 - `cover_img` 和四种 `pic_cdn_url_*` 均与 `cover` 相同；
-- `copyright_type === copyright_stat`。
+- 删除状态与版权字段形成已知的旧错误组合之一：
+  - `is_deleted === true`，且 `copyright_stat`、`copyright_type` 都是 `11`；
+  - `is_deleted === false`，且 `copyright_stat`、`copyright_type` 都是 `100`。
 
-满足全部条件时，迁移按旧错误映射反推原始状态：
+满足全部条件时，迁移使用版权字段提供的正向证据纠正状态：
 
-- 原 `is_deleted = true` 视为旧 `del_flag = 1`，改为正常；
-- 原 `is_deleted = false` 视为旧 `del_flag = 4`，改为已删除；
-- 同时补写 `_source` 和 `_profile_del_flag`。
+- `copyright_stat = copyright_type = 11` 的记录改为正常；
+- `copyright_stat = copyright_type = 100` 的记录改为已删除；
+- 只补写 `_source = 'profile_ext'`。旧缓存没有保存原始 `del_flag`，迁移不猜测或伪造 `_profile_del_flag`。
 
-不满足全部条件的记录视为来源不明确并保持不变；它们在下次正常同步时会由带来源标记的新数据覆盖。迁移失败只记录错误，不阻止数据库打开，与现有迁移策略一致。
+不满足全部条件的记录（包括未知版权值、已纠正状态、已下载记录和其他来源记录）视为来源不明确并保持不变；它们在下次正常同步时会由带来源标记的新数据覆盖。迁移失败只记录错误，不阻止数据库打开，与现有迁移策略一致。
 
 ## 数据流
 
@@ -70,8 +73,8 @@
 2. `del_flag = 4` 转换为 `is_deleted = true`；
 3. 缺失或未知 `del_flag` 默认可见；
 4. 主文章和多图文子文章都保留原始状态与来源；
-5. v8 迁移纠正符合旧转换器特征的记录；
-6. v8 迁移不修改 `_single` 记录及不符合特征的旧接口记录。
+5. v8 迁移只纠正具备明确矛盾状态证据的旧转换器记录，且不伪造原始 `del_flag`；
+6. v8 迁移不修改 `_single`、已下载、已纠正、未知版权值及其他来源记录。
 
 端到端验证使用当前真实响应执行“添加公众号 → 选择公众号 → 查看文章列表”：默认隐藏已删除文章时应显示九篇
 `del_flag = 1` 文章，不显示 `del_flag = 4` 文章；关闭该设置后十篇均可显示。

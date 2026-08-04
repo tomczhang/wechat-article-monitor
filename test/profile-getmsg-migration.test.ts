@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  isLegacyProfileArticle,
-  migrateLegacyProfileArticleDeletion,
-} from '../utils/profile-getmsg-migration.ts';
+import { isLegacyProfileArticle, migrateLegacyProfileArticleDeletion } from '../utils/profile-getmsg-migration.ts';
 
-function legacyProfileArticle(isDeleted: boolean): Record<string, any> {
+function legacyProfileArticle(isDeleted: boolean, copyrightStat: number): Record<string, any> {
   const cover = 'https://example.com/cover.jpg';
   return {
     aid: '2247485222_1',
@@ -13,8 +10,8 @@ function legacyProfileArticle(isDeleted: boolean): Record<string, any> {
     appmsg_album_infos: [],
     ban_flag: 0,
     checking: 0,
-    copyright_stat: 11,
-    copyright_type: 11,
+    copyright_stat: copyrightStat,
+    copyright_type: copyrightStat,
     cover,
     cover_img: cover,
     create_time: 1785806269,
@@ -29,26 +26,38 @@ function legacyProfileArticle(isDeleted: boolean): Record<string, any> {
 }
 
 test('repairs both legacy profile deletion states', () => {
-  const normal = legacyProfileArticle(true);
-  const deleted = legacyProfileArticle(false);
+  const normal = { ...legacyProfileArticle(true, 11), _status: '' };
+  const deleted = legacyProfileArticle(false, 100);
 
   assert.equal(migrateLegacyProfileArticleDeletion(normal), true);
   assert.equal(normal.is_deleted, false);
   assert.equal(normal._source, 'profile_ext');
-  assert.equal(normal._profile_del_flag, 1);
+  assert.equal(normal._profile_del_flag, undefined);
 
   assert.equal(migrateLegacyProfileArticleDeletion(deleted), true);
   assert.equal(deleted.is_deleted, true);
   assert.equal(deleted._source, 'profile_ext');
-  assert.equal(deleted._profile_del_flag, 4);
+  assert.equal(deleted._profile_del_flag, undefined);
 });
 
-test('leaves records from other sources unchanged', () => {
-  const single = { ...legacyProfileArticle(false), _single: true };
-  const publisher = { ...legacyProfileArticle(false), pic_cdn_url_1_1: 'https://example.com/cropped.jpg' };
-  const alreadyMigrated = { ...legacyProfileArticle(false), _source: 'profile_ext' as const };
+test('leaves ambiguous, corrected, and other-source records unchanged', () => {
+  const single = { ...legacyProfileArticle(false, 100), _single: true };
+  const publisher = legacyProfileArticle(false, 1);
+  const unknownFlag = legacyProfileArticle(false, 11);
+  const correctedNormal = legacyProfileArticle(false, 11);
+  const correctedDeleted = legacyProfileArticle(true, 100);
+  const downloaded = { ...legacyProfileArticle(true, 11), _status: '正常' };
+  const alreadyMigrated = { ...legacyProfileArticle(false, 100), _source: 'profile_ext' as const };
 
-  for (const article of [single, publisher, alreadyMigrated]) {
+  for (const article of [
+    single,
+    publisher,
+    unknownFlag,
+    correctedNormal,
+    correctedDeleted,
+    downloaded,
+    alreadyMigrated,
+  ]) {
     const before = structuredClone(article);
     assert.equal(isLegacyProfileArticle(article), false);
     assert.equal(migrateLegacyProfileArticleDeletion(article), false);

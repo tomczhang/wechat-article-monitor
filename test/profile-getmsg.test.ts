@@ -38,6 +38,7 @@ function makeResponse(): ProfileGetMsgResponse {
             title: 'unknown flag',
             content_url: 'https://mp.weixin.qq.com/s?mid=2247485221&idx=1',
             cover: 'https://example.com/unknown.jpg',
+            del_flag: 99,
           },
         },
       ],
@@ -58,7 +59,7 @@ test('maps profile deletion flags and preserves their source', () => {
     [
       { title: 'normal', deleted: false, source: 'profile_ext', rawFlag: 1 },
       { title: 'deleted child', deleted: true, source: 'profile_ext', rawFlag: 4 },
-      { title: 'unknown flag', deleted: false, source: 'profile_ext', rawFlag: undefined },
+      { title: 'unknown flag', deleted: false, source: 'profile_ext', rawFlag: 99 },
     ]
   );
 });

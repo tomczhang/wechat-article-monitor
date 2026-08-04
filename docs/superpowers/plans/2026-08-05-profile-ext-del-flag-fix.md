@@ -4,7 +4,7 @@
 
 **Goal:** Correct `profile_ext_getmsg` deletion-state conversion and safely repair affected IndexedDB article records.
 
-**Architecture:** Keep WeChat-specific flag semantics in the profile response converter and persist both provenance and the raw flag on converted articles. Put legacy-record recognition and correction in a pure migration helper, then call that helper from a Dexie v8 upgrade so unrelated article sources remain untouched.
+**Architecture:** Keep WeChat-specific flag semantics in the profile response converter and persist both provenance and the raw flag on newly converted articles. Put legacy-record recognition and correction in a pure migration helper, require positive evidence before changing old records, and never fabricate a raw flag that was not cached. Call the helper from a Dexie v8 upgrade so unrelated article sources remain untouched.
 
 **Tech Stack:** Nuxt 3, TypeScript, Node 22 built-in test runner, Dexie 4, Puppeteer for final browser verification.
 
@@ -71,6 +71,7 @@ function makeResponse(): ProfileGetMsgResponse {
             title: 'unknown flag',
             content_url: 'https://mp.weixin.qq.com/s?mid=2247485221&idx=1',
             cover: 'https://example.com/unknown.jpg',
+            del_flag: 99,
           },
         },
       ],
@@ -91,7 +92,7 @@ test('maps profile deletion flags and preserves their source', () => {
     [
       { title: 'normal', deleted: false, source: 'profile_ext', rawFlag: 1 },
       { title: 'deleted child', deleted: true, source: 'profile_ext', rawFlag: 4 },
-      { title: 'unknown flag', deleted: false, source: 'profile_ext', rawFlag: undefined },
+      { title: 'unknown flag', deleted: false, source: 'profile_ext', rawFlag: 99 },
     ]
   );
 });
@@ -175,7 +176,7 @@ import {
   migrateLegacyProfileArticleDeletion,
 } from '../utils/profile-getmsg-migration.ts';
 
-function legacyProfileArticle(isDeleted: boolean): Record<string, any> {
+function legacyProfileArticle(isDeleted: boolean, copyrightStat: number): Record<string, any> {
   const cover = 'https://example.com/cover.jpg';
   return {
     aid: '2247485222_1',
@@ -183,8 +184,8 @@ function legacyProfileArticle(isDeleted: boolean): Record<string, any> {
     appmsg_album_infos: [],
     ban_flag: 0,
     checking: 0,
-    copyright_stat: 11,
-    copyright_type: 11,
+    copyright_stat: copyrightStat,
+    copyright_type: copyrightStat,
     cover,
     cover_img: cover,
     create_time: 1785806269,
@@ -199,26 +200,38 @@ function legacyProfileArticle(isDeleted: boolean): Record<string, any> {
 }
 
 test('repairs both legacy profile deletion states', () => {
-  const normal = legacyProfileArticle(true);
-  const deleted = legacyProfileArticle(false);
+  const normal = { ...legacyProfileArticle(true, 11), _status: '' };
+  const deleted = legacyProfileArticle(false, 100);
 
   assert.equal(migrateLegacyProfileArticleDeletion(normal), true);
   assert.equal(normal.is_deleted, false);
   assert.equal(normal._source, 'profile_ext');
-  assert.equal(normal._profile_del_flag, 1);
+  assert.equal(normal._profile_del_flag, undefined);
 
   assert.equal(migrateLegacyProfileArticleDeletion(deleted), true);
   assert.equal(deleted.is_deleted, true);
   assert.equal(deleted._source, 'profile_ext');
-  assert.equal(deleted._profile_del_flag, 4);
+  assert.equal(deleted._profile_del_flag, undefined);
 });
 
-test('leaves records from other sources unchanged', () => {
-  const single = { ...legacyProfileArticle(false), _single: true };
-  const publisher = { ...legacyProfileArticle(false), pic_cdn_url_1_1: 'https://example.com/cropped.jpg' };
-  const alreadyMigrated = { ...legacyProfileArticle(false), _source: 'profile_ext' as const };
+test('leaves ambiguous, corrected, and other-source records unchanged', () => {
+  const single = { ...legacyProfileArticle(false, 100), _single: true };
+  const publisher = legacyProfileArticle(false, 1);
+  const unknownFlag = legacyProfileArticle(false, 11);
+  const correctedNormal = legacyProfileArticle(false, 11);
+  const correctedDeleted = legacyProfileArticle(true, 100);
+  const downloaded = { ...legacyProfileArticle(true, 11), _status: '正常' };
+  const alreadyMigrated = { ...legacyProfileArticle(false, 100), _source: 'profile_ext' as const };
 
-  for (const article of [single, publisher, alreadyMigrated]) {
+  for (const article of [
+    single,
+    publisher,
+    unknownFlag,
+    correctedNormal,
+    correctedDeleted,
+    downloaded,
+    alreadyMigrated,
+  ]) {
     const before = structuredClone(article);
     assert.equal(isLegacyProfileArticle(article), false);
     assert.equal(migrateLegacyProfileArticleDeletion(article), false);
@@ -245,15 +258,19 @@ Create `utils/profile-getmsg-migration.ts`:
 type MutableArticle = Record<string, unknown> & {
   is_deleted?: boolean;
   _source?: string;
-  _profile_del_flag?: number;
 };
 
 export function isLegacyProfileArticle(article: MutableArticle): boolean {
   const cover = article.cover;
+  const hasInvertedDeletionState =
+    (article.is_deleted === true && article.copyright_stat === 11 && article.copyright_type === 11) ||
+    (article.is_deleted === false && article.copyright_stat === 100 && article.copyright_type === 100);
+
   return (
     article._source === undefined &&
     article._single !== true &&
-    typeof article.is_deleted === 'boolean' &&
+    (article._status === undefined || article._status === '') &&
+    hasInvertedDeletionState &&
     article.album_id === '' &&
     Array.isArray(article.appmsg_album_infos) &&
     article.appmsg_album_infos.length === 0 &&
@@ -273,10 +290,8 @@ export function isLegacyProfileArticle(article: MutableArticle): boolean {
 export function migrateLegacyProfileArticleDeletion(article: MutableArticle): boolean {
   if (!isLegacyProfileArticle(article)) return false;
 
-  const oldDeleted = article.is_deleted === true;
-  article.is_deleted = !oldDeleted;
+  article.is_deleted = article.copyright_stat === 100;
   article._source = 'profile_ext';
-  article._profile_del_flag = oldDeleted ? 1 : 4;
   return true;
 }
 ```
