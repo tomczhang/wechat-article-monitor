@@ -110,6 +110,9 @@ export interface AppMsgAlbumInfo {
 }
 
 export interface AppMsgEx {
+  // 微信历史消息接口来源信息
+  _source?: 'profile_ext';
+  _profile_del_flag?: number;
   aid: string;
   album_id: string;
   appmsg_album_infos: AppMsgAlbumInfo[];

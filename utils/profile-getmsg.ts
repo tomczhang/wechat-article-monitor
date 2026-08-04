@@ -26,6 +26,15 @@ function formatDuration(duration = 0): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+function normalizeProfileDelFlag(delFlag?: number): number | undefined {
+  const value = Number(delFlag);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+export function isProfileArticleDeleted(delFlag?: number): boolean {
+  return normalizeProfileDelFlag(delFlag) === 4;
+}
+
 function toAppMsgEx(
   item: ProfileGetMsgAppMsgItem,
   message: ParsedProfileGetMsg,
@@ -40,6 +49,8 @@ function toAppMsgEx(
   const cover = decodeHtmlEntities(item.cover);
 
   return {
+    _source: 'profile_ext',
+    _profile_del_flag: normalizeProfileDelFlag(item.del_flag),
     aid: `${appmsgid}_${itemidx}`,
     album_id: '',
     appmsg_album_infos: [],
@@ -55,7 +66,7 @@ function toAppMsgEx(
     create_time: createTime,
     digest: item.digest || '',
     has_red_packet_cover: 0,
-    is_deleted: item.del_flag === 1,
+    is_deleted: isProfileArticleDeleted(item.del_flag),
     is_pay_subscribe: item.is_pay_subscribe || 0,
     wecoin_count: 0,
     item_show_type: item.item_show_type || 0,
