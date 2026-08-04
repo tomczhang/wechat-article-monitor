@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable, type Table } from 'dexie';
+import { migrateLegacyProfileArticleDeletion } from '~/utils/profile-getmsg-migration';
 import type { ArticleAsset } from './article';
 import type { Asset } from './assets';
 import type { CommentAsset } from './comment';
@@ -207,6 +208,31 @@ db.version(7).upgrade(async tx => {
     }
   } catch (err) {
     console.error('[Article v7 migration] cleanup failed:', err);
+  }
+});
+
+// profile_ext 历史消息的 del_flag 语义曾被写反：1 是正常，4 是已删除或不可访问。
+// 只纠正能明确识别为旧 profile_ext 转换结果的记录，其他来源保持不变。
+db.version(8).upgrade(async tx => {
+  try {
+    const table = tx.table('article');
+    const updates: { key: string; article: any }[] = [];
+
+    await table.toCollection().each((article: any, cursor) => {
+      if (migrateLegacyProfileArticleDeletion(article)) {
+        updates.push({ key: cursor.primaryKey as string, article });
+      }
+    });
+
+    for (const { key, article } of updates) {
+      await table.put(article, key);
+    }
+
+    if (updates.length > 0) {
+      console.info(`[Article v8 migration] corrected ${updates.length} profile article deletion states`);
+    }
+  } catch (err) {
+    console.error('[Article v8 migration] deletion-state correction failed:', err);
   }
 });
 
