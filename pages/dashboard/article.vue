@@ -24,6 +24,7 @@ import ConfirmModal from '~/components/modal/Confirm.vue';
 import AccountSelectorForArticle from '~/components/selector/AccountSelectorForArticle.vue';
 import toastFactory from '~/composables/toast';
 import useCredentialGate from '~/composables/useCredentialGate';
+import { watchArticleTableReloads } from '~/composables/watchArticleTableReloads';
 import { isDev, websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
 import { deleteAccountData } from '~/store/v2';
@@ -382,6 +383,7 @@ let tableLoadVersion = 0;
 // 文章表格一次只展示一个 Credential 对应的公众号
 const selectedAccount = ref<CredentialAccount | undefined>();
 const selectedCredentialValid = computed(() => selectedAccount.value?.credentialValid === true);
+const { isSyncing: accountSyncing, lastSyncedPage, syncAccount, stop: stopAccountSync } = useAccountArticleSync();
 
 watch(
   credentialAccounts,
@@ -393,22 +395,32 @@ watch(
   { immediate: true }
 );
 
-watch(selectedAccount, account => {
-  if (!account) {
+watchArticleTableReloads({
+  selectedAccount,
+  autoSyncingBiz,
+  lastSyncedPage,
+  onAccountUnavailable() {
     tableLoadVersion++;
     loading.value = false;
     globalRowData = [];
     gridApi.value?.setGridOption('rowData', []);
-    return;
-  }
-  switchTableData(account.fakeid).catch(error => {
-    toast.error('读取文章失败', error?.message || '未知错误');
-  });
+  },
+  onReload(fakeid) {
+    switchTableData(fakeid).catch(error => {
+      toast.error('读取文章失败', error?.message || '未知错误');
+    });
+  },
+  onPageSynced(fakeid) {
+    switchTableData(fakeid, { showLoading: false }).catch(error => {
+      toast.error('读取文章失败', error?.message || '未知错误');
+    });
+  },
 });
 
-async function switchTableData(fakeid: string) {
+async function switchTableData(fakeid: string, options: { showLoading?: boolean } = {}) {
+  const showLoading = options.showLoading ?? true;
   const loadVersion = ++tableLoadVersion;
-  loading.value = true;
+  if (showLoading) loading.value = true;
   try {
     const articles: Article[] = [];
     const data = await getArticleCache(fakeid, Math.floor(Date.now() / 1000));
@@ -431,7 +443,7 @@ async function switchTableData(fakeid: string) {
         });
       }
     }
-    await sleep(200);
+    if (showLoading) await sleep(200);
     if (loadVersion !== tableLoadVersion) return;
     const visible = articles.filter(article => (hideDeleted.value ? !article.is_deleted : true));
     globalRowData = shouldCollapseReposts.value ? collapseReposts(visible) : visible;
@@ -546,7 +558,6 @@ const {
   exportFile,
 } = useExporter();
 
-const { isSyncing: accountSyncing, syncAccount, stop: stopAccountSync } = useAccountArticleSync();
 const isDeletingAccountData = ref(false);
 const accountActionLocked = computed(() =>
   isAccountActionLocked({
@@ -575,9 +586,6 @@ async function syncSelectedAccount() {
       })
     );
     await refreshAccountInfos();
-    if (selectedAccount.value?.fakeid === account.fakeid) {
-      await switchTableData(account.fakeid);
-    }
     const rangeHint = isSyncAll() ? '' : `（同步范围：${getSyncRangeLabel()}）`;
     toast.success('同步完成', `已同步【${account.nickname}】${rangeHint}`);
   } catch (error: any) {

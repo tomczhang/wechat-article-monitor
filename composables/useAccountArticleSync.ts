@@ -4,16 +4,23 @@ import type { MpAccount } from '~/store/v2/info';
 import type { Preferences } from '~/types/preferences';
 import { shouldContinueAccountSync } from '~/utils/account-sync';
 
+export interface SyncedArticlePage {
+  fakeid: string;
+  sequence: number;
+}
+
 export default function useAccountArticleSync() {
   const preferences = usePreferences();
   const { getSyncTimestamp } = useSyncDeadline();
 
   const syncingBiz = ref<string | null>(null);
   const isSyncing = computed(() => syncingBiz.value !== null);
+  const lastSyncedPage = shallowRef<SyncedArticlePage | null>(null);
 
   let canceled = false;
   let syncTimer: number | null = null;
   let releaseWait: (() => void) | null = null;
+  let syncedPageSequence = 0;
 
   function throwIfCanceled() {
     if (canceled) throw new Error('已取消同步');
@@ -41,6 +48,7 @@ export default function useAccountArticleSync() {
       while (true) {
         throwIfCanceled();
         const [articles, completed, , nextBegin] = await getArticleList(account, begin);
+        lastSyncedPage.value = { fakeid: account.fakeid, sequence: ++syncedPageSequence };
         throwIfCanceled();
         begin = nextBegin;
 
@@ -89,6 +97,7 @@ export default function useAccountArticleSync() {
   return {
     syncingBiz,
     isSyncing,
+    lastSyncedPage,
     syncAccount,
     stop,
   };
