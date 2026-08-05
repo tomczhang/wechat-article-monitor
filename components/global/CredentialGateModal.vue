@@ -6,7 +6,6 @@ const {
   targetBiz,
   reason,
   state,
-  canClose,
   configuring,
   actionError,
   serviceStatus,
@@ -40,31 +39,24 @@ const stateText = computed(() => {
 const upstreamLabel = computed(
   () => serviceStatus.value.systemProxy?.upstreamProxy || serviceStatus.value.upstreamProxy || '未检测到'
 );
+
+const modalDescription = computed(() =>
+  targetBiz.value
+    ? `当前操作需要公众号 ${targetBiz.value} 的有效 Credential。`
+    : '只需在微信中打开目标公众号文章，系统会自动完成捕获。'
+);
 </script>
 
 <template>
   <UModal v-model="modalOpen" prevent-close :ui="{ width: 'sm:max-w-2xl' }">
-    <UCard :ui="{ ring: '', divide: 'divide-y divide-slate-100 dark:divide-slate-800' }">
+    <UCard>
       <template #header>
-        <div class="flex items-start justify-between gap-6">
-          <div>
-            <p class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Credential 初始化</p>
-            <h2 class="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{{ stateText }}</h2>
-            <p class="mt-1 text-sm text-slate-500">
-              <template v-if="targetBiz">当前操作需要公众号 {{ targetBiz }} 的有效 Credential。</template>
-              <template v-else>只需在微信中打开目标公众号文章，系统会自动完成捕获。</template>
-            </p>
-          </div>
-          <UButton
-            v-if="canClose"
-            icon="i-lucide:x"
-            color="gray"
-            variant="ghost"
-            square
-            aria-label="关闭"
-            @click="closeGate"
-          />
-        </div>
+        <BaseModalHeader
+          eyebrow="Credential 初始化"
+          :title="stateText"
+          :description="modalDescription"
+          @close="closeGate"
+        />
       </template>
 
       <div class="space-y-6">

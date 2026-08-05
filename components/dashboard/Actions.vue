@@ -7,7 +7,7 @@ const modal = useModal();
 </script>
 
 <template>
-  <ul class="hidden md:flex items-center gap-5">
+  <ul class="hidden items-center gap-1 md:flex">
     <!-- 通知 -->
     <!--    <li>-->
     <!--      <UTooltip text="通知">-->
@@ -19,10 +19,13 @@ const modal = useModal();
 
     <li>
       <UTooltip text="加入QQ群">
-        <UIcon
+        <UButton
+          icon="i-tdesign:logo-qq-filled"
+          color="gray"
+          variant="ghost"
+          square
+          aria-label="加入 QQ 群"
           @click="modal.open(QQGroupModal)"
-          name="i-tdesign:logo-qq-filled"
-          class="size-7 text-zinc-400 hover:text-blue-500 cursor-pointer transition-colors"
         />
       </UTooltip>
     </li>
@@ -30,10 +33,13 @@ const modal = useModal();
     <!-- 文档 -->
     <li>
       <UTooltip text="文档">
-        <UIcon
-          name="i-lucide:book-open"
+        <UButton
+          icon="i-lucide:book-open"
+          color="gray"
+          variant="ghost"
+          square
+          aria-label="打开文档"
           @click="gotoLink(docsWebSite)"
-          class="size-7 text-zinc-400 hover:text-blue-500 cursor-pointer transition-colors"
         />
       </UTooltip>
     </li>
@@ -41,10 +47,13 @@ const modal = useModal();
     <!-- GitHub -->
     <li>
       <UTooltip text="GitHub">
-        <UIcon
+        <UButton
+          icon="i-lucide:github"
+          color="gray"
+          variant="ghost"
+          square
+          aria-label="打开 GitHub"
           @click="gotoLink('https://github.com/wechat-article/wechat-article-exporter')"
-          name="i-lucide:github"
-          class="size-7 text-zinc-400 hover:text-blue-500 cursor-pointer transition-colors"
         />
       </UTooltip>
     </li>

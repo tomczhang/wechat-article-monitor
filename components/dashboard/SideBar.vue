@@ -6,11 +6,16 @@ import { websiteName } from '~/config';
 
 <template>
   <aside
-    class="hidden md:flex flex-col h-screen w-[250px] flex-shrink-0 justify-between border-r border-slate-4 dark:border-slate-700 bg-slate-1 px-4 pb-6"
+    class="hidden h-screen w-60 flex-shrink-0 flex-col justify-between border-r border-slate-200 bg-white px-3 pb-5 dark:border-slate-800 dark:bg-slate-950 md:flex"
   >
     <!-- 网站标题 & Logo -->
-    <div class="flex items-center h-[60px]">
-      <NuxtLink to="/" class="px-2 font-bold text-xl">{{ websiteName }}</NuxtLink>
+    <div class="flex h-16 items-center px-2">
+      <NuxtLink to="/" class="flex min-w-0 items-center gap-2.5 text-slate-950 dark:text-slate-50">
+        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+          <UIcon name="i-lucide:radio-tower" class="size-4" />
+        </span>
+        <span class="truncate text-base font-semibold tracking-tight">{{ websiteName }}</span>
+      </NuxtLink>
     </div>
 
     <!-- 导航菜单 -->

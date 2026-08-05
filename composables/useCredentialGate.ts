@@ -17,6 +17,7 @@ export default function useCredentialGate() {
 
   const open = useState<boolean>('credential-gate-open', () => false);
   const sessionPassed = useState<boolean>('credential-gate-passed', () => false);
+  const sessionDismissed = useState<boolean>('credential-gate-dismissed', () => false);
   const targetBiz = useState<string | null>('credential-gate-target-biz', () => null);
   const reason = useState<string>('credential-gate-reason', () => '');
   const configuring = useState<boolean>('credential-gate-configuring', () => false);
@@ -37,9 +38,8 @@ export default function useCredentialGate() {
     return 'waitingCredential';
   });
 
-  const canClose = computed(() => sessionPassed.value);
-
   function openGate(options: CredentialRequiredDetail & { refresh?: boolean } = {}) {
+    sessionDismissed.value = false;
     targetBiz.value = options.fakeid || null;
     reason.value = options.reason || '';
     actionError.value = null;
@@ -48,7 +48,7 @@ export default function useCredentialGate() {
   }
 
   function closeGate() {
-    if (!canClose.value) return;
+    sessionDismissed.value = true;
     open.value = false;
     targetBiz.value = null;
     reason.value = '';
@@ -122,7 +122,7 @@ export default function useCredentialGate() {
             if (validCredentials.value.length > 0) {
               sessionPassed.value = true;
               open.value = false;
-            } else {
+            } else if (!sessionDismissed.value) {
               open.value = true;
             }
             return;
@@ -170,7 +170,6 @@ export default function useCredentialGate() {
     targetBiz,
     reason,
     state,
-    canClose,
     configuring,
     actionError,
     serviceStatus,

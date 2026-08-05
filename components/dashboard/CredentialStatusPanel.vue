@@ -10,7 +10,7 @@ const countText = computed(() => `${validCredentials.value.length} 个有效凭�
 <template>
   <button
     type="button"
-    class="w-full rounded-lg border border-slate-200 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800/50"
+    class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-100 active:scale-[0.98] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800"
     @click="openGate({ refresh: true })"
   >
     <span class="flex items-center justify-between gap-3">

@@ -28,16 +28,21 @@ function onCancel() {
 <template>
   <UModal prevent-close>
     <UCard>
-      <div class="flex items-center gap-2 font-medium text-lg">
-        <UIcon :name="icon" class="size-10 text-rose-500" />
-        <span>{{ title }}</span>
+      <template #header>
+        <BaseModalHeader :title="title || '确认操作'" eyebrow="需要确认" @close="onCancel" />
+      </template>
+
+      <div class="flex items-start gap-3">
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
+          <UIcon :name="icon" class="size-5" />
+        </span>
+        <p v-if="description" class="text-sm leading-6 text-slate-600 dark:text-slate-300">{{ description }}</p>
       </div>
-      <div v-if="description" class="my-5">{{ description }}</div>
 
       <template #footer>
-        <div class="flex justify-end space-x-3">
-          <UButton color="white" class="px-3" @click="onCancel">取消</UButton>
-          <UButton color="rose" class="px-3" @click="onConfirm">确定</UButton>
+        <div class="flex justify-end gap-2">
+          <UButton color="gray" variant="soft" @click="onCancel">取消</UButton>
+          <UButton color="rose" @click="onConfirm">确认</UButton>
         </div>
       </template>
     </UCard>

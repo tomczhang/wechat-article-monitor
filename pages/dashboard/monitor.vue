@@ -175,9 +175,7 @@ onUnmounted(() => {
 
 <template>
   <div class="h-full">
-    <Teleport defer to="#title">
-      <h1 class="text-[28px] leading-[34px] text-slate-12 dark:text-slate-50 font-bold">文章监控</h1>
-    </Teleport>
+    <BasePageTitle title="文章监控" eyebrow="实时任务" />
 
     <div class="flex flex-col h-full divide-y divide-gray-200 dark:divide-slate-700">
       <!-- 顶部状态条 -->
@@ -700,52 +698,60 @@ onUnmounted(() => {
 
     <!-- 添加公众号：从已抓取 Credential 选择 -->
     <UModal v-model="showCredentialPicker">
-      <div class="p-6 space-y-4">
-        <div>
-          <h3 class="text-lg font-semibold">添加监控公众号</h3>
-          <p class="text-sm text-slate-500 mt-1">从已抓取的有效 Credential 中选择要监控的公众号。</p>
-        </div>
+      <UCard>
+        <template #header>
+          <BaseModalHeader
+            title="添加监控公众号"
+            description="从已抓取的有效 Credential 中选择要监控的公众号。"
+            @close="showCredentialPicker = false"
+          />
+        </template>
 
-        <!-- 无可添加凭证：给出抓取引导 -->
-        <div
-          v-if="addableCredentials.length === 0"
-          class="rounded-lg border border-dashed border-slate-300 dark:border-slate-600 px-4 py-5 text-sm text-slate-500 space-y-3"
-        >
-          <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full" :class="serviceStatus.running ? 'bg-emerald-500' : 'bg-rose-400'" />
-            <span>抓包服务{{ serviceStatus.running ? '已就绪' : '未启动 (需安装 mitmproxy)' }}</span>
-          </div>
-          <p class="leading-relaxed">
-            将系统代理设为
-            <code class="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">{{ proxyEndpoint }}</code>，
-            在微信中打开目标公众号的任意文章，凭证会自动出现在此处。
-            <template v-if="validCredentials.length > 0">当前所有有效凭证均已在监控中。</template>
-          </p>
-        </div>
-
-        <ul v-else class="space-y-1 max-h-96 overflow-y-auto">
-          <li
-            v-for="cred in addableCredentials"
-            :key="cred.biz"
-            class="flex items-center gap-3 p-3 rounded-md border border-slate-200 dark:border-slate-700"
+        <div class="space-y-4">
+          <!-- 无可添加凭证：给出抓取引导 -->
+          <div
+            v-if="addableCredentials.length === 0"
+            class="space-y-3 rounded-lg border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500 dark:border-slate-600"
           >
-            <img v-if="cred.avatar" :src="cred.avatar" class="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-            <div class="flex-1 min-w-0">
-              <p class="font-medium text-sm truncate">{{ cred.nickname || cred.biz }}</p>
-              <p class="text-xs text-slate-400 font-mono truncate">{{ cred.biz }}</p>
+            <div class="flex items-center gap-2">
+              <span
+                class="size-2.5 rounded-full"
+                :class="serviceStatus.running ? 'bg-emerald-500' : 'bg-rose-400'"
+              />
+              <span>抓包服务{{ serviceStatus.running ? '已就绪' : '未启动 (需安装 mitmproxy)' }}</span>
             </div>
-            <CredentialExpiryBar :timestamp="cred.timestamp" class="w-32 flex-shrink-0" />
-            <UButton
-              size="xs"
-              color="black"
-              :loading="addingWatchBiz === cred.biz"
-              @click="addFromCredential(cred)"
+            <p class="leading-relaxed">
+              将系统代理设为
+              <code class="rounded-md bg-slate-100 px-1 font-mono dark:bg-slate-800">{{ proxyEndpoint }}</code>，
+              在微信中打开目标公众号的任意文章，凭证会自动出现在此处。
+              <template v-if="validCredentials.length > 0">当前所有有效凭证均已在监控中。</template>
+            </p>
+          </div>
+
+          <ul v-else class="max-h-96 space-y-1 overflow-y-auto">
+            <li
+              v-for="cred in addableCredentials"
+              :key="cred.biz"
+              class="flex items-center gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700"
             >
-              加入监控
-            </UButton>
-          </li>
-        </ul>
-      </div>
+              <img v-if="cred.avatar" :src="cred.avatar" class="size-10 flex-shrink-0 rounded-full object-cover" />
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-medium">{{ cred.nickname || cred.biz }}</p>
+                <p class="truncate font-mono text-xs text-slate-400">{{ cred.biz }}</p>
+              </div>
+              <CredentialExpiryBar :timestamp="cred.timestamp" class="w-32 flex-shrink-0" />
+              <UButton
+                size="xs"
+                color="black"
+                :loading="addingWatchBiz === cred.biz"
+                @click="addFromCredential(cred)"
+              >
+                加入监控
+              </UButton>
+            </li>
+          </ul>
+        </div>
+      </UCard>
     </UModal>
   </div>
 </template>

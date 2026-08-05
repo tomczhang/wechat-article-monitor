@@ -1,8 +1,6 @@
 <template>
   <div class="h-full">
-    <Teleport defer to="#title">
-      <h1 class="text-[28px] leading-[34px] text-slate-12 dark:text-slate-50 font-bold">合集下载</h1>
-    </Teleport>
+    <BasePageTitle title="合集下载" eyebrow="内容归档" />
 
     <div class="flex flex-col h-full divide-y divide-gray-200">
       <!-- 顶部筛选与操作区 -->

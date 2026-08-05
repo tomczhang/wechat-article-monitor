@@ -19,7 +19,17 @@
 }
 
 body {
+    min-width: 320px;
+    background: #f8fafc;
+    color: #0f172a;
     overscroll-behavior: none; /* 阻止滚动到页面边缘的效果 */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+.dark body {
+    background: #020617;
+    color: #f8fafc;
 }
 ::selection {
     background-color: yellow;
