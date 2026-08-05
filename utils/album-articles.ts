@@ -24,11 +24,7 @@ function appendUniqueArticles(target: ArticleItem[], seenUrls: Set<string>, item
   }
 }
 
-export function buildAlbumArticleStub(
-  fakeid: string,
-  album: AppMsgAlbumInfo,
-  item: ArticleItem
-): AppMsgExWithFakeID {
+export function buildAlbumArticleStub(fakeid: string, album: AppMsgAlbumInfo, item: ArticleItem): AppMsgExWithFakeID {
   const cover = item.cover_img_1_1 || '';
   const createTime = toNumber(item.create_time);
   const appmsgid = toNumber(item.msgid);

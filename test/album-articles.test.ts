@@ -52,18 +52,16 @@ test('buildAlbumArticleStub creates a stable downloader-compatible article', () 
 });
 
 test('selectMissingAlbumArticleStubs does not replace an existing article URL', () => {
-  const result = selectMissingAlbumArticleStubs(
-    new Set(['https://mp.weixin.qq.com/s/existing']),
-    'biz-a',
-    album,
-    [
-      article('100', '1', 'https://mp.weixin.qq.com/s/existing'),
-      article('101', '1', 'https://mp.weixin.qq.com/s/new'),
-      article('102', '1', 'https://mp.weixin.qq.com/s/new'),
-    ]
-  );
+  const result = selectMissingAlbumArticleStubs(new Set(['https://mp.weixin.qq.com/s/existing']), 'biz-a', album, [
+    article('100', '1', 'https://mp.weixin.qq.com/s/existing'),
+    article('101', '1', 'https://mp.weixin.qq.com/s/new'),
+    article('102', '1', 'https://mp.weixin.qq.com/s/new'),
+  ]);
 
-  assert.deepEqual(result.map(item => item.link), ['https://mp.weixin.qq.com/s/new']);
+  assert.deepEqual(
+    result.map(item => item.link),
+    ['https://mp.weixin.qq.com/s/new']
+  );
 });
 
 test('collectCompleteAlbum loads every page and keeps unique URL order', async () => {
@@ -77,7 +75,10 @@ test('collectCompleteAlbum loads every page and keeps unique URL order', async (
   });
 
   assert.deepEqual(cursors, ['1:1']);
-  assert.deepEqual(result.map(item => item.url), ['/a', '/b']);
+  assert.deepEqual(
+    result.map(item => item.url),
+    ['/a', '/b']
+  );
 });
 
 test('collectCompleteAlbum follows the last unique article cursor across pages', async () => {
@@ -93,7 +94,10 @@ test('collectCompleteAlbum follows the last unique article cursor across pages',
   });
 
   assert.deepEqual(cursors, ['1:1', '2:1']);
-  assert.deepEqual(result.map(item => item.url), ['/a', '/b', '/c']);
+  assert.deepEqual(
+    result.map(item => item.url),
+    ['/a', '/b', '/c']
+  );
 });
 
 test('collectCompleteAlbum rejects a page that cannot advance', async () => {
