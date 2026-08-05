@@ -47,6 +47,7 @@ test('buildAlbumArticleStub creates a stable downloader-compatible article', () 
   assert.equal(result.link, 'https://mp.weixin.qq.com/s/a');
   assert.equal(result.create_time, 1754352000);
   assert.equal(result.is_pay_subscribe, 1);
+  assert.equal(result.wecoin_count, 0);
   assert.equal(result.cover, 'https://example.com/cover.jpg');
   assert.deepEqual(result.appmsg_album_infos, [album]);
 });
@@ -62,6 +63,18 @@ test('selectMissingAlbumArticleStubs does not replace an existing article URL', 
     result.map(item => item.link),
     ['https://mp.weixin.qq.com/s/new']
   );
+});
+
+test('selectMissingAlbumArticleStubs preserves an occupied primary key with a variant URL', () => {
+  const result = selectMissingAlbumArticleStubs(
+    new Set(),
+    'biz-a',
+    album,
+    [article('100', '1', 'https://mp.weixin.qq.com/s/new-url')],
+    new Set(['biz-a:100_1'])
+  );
+
+  assert.deepEqual(result, []);
 });
 
 test('collectCompleteAlbum loads every page and keeps unique URL order', async () => {

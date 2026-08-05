@@ -269,6 +269,9 @@ onUnmounted(() => {
                 {{ selectedCredentialToAdd.nickname || selectedCredentialToAdd.biz }}
               </span>
             </div>
+            <span v-else class="truncate text-left text-slate-500">
+              {{ addableCredentials.length > 0 ? '选择 Credential 加入监控' : '暂无可添加 Credential' }}
+            </span>
           </template>
 
           <template #option="{ option: cred }">

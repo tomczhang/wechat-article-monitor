@@ -27,6 +27,25 @@ test('album actions prepare the complete album before invoking shared capabiliti
   assert.match(source, /getHtmlCache\(url\)/);
 });
 
+test('album pagination stalls cannot be treated as complete or silently exported', async () => {
+  const source = await readFile(new URL('../pages/dashboard/album.vue', import.meta.url), 'utf8');
+  const stallStart = source.indexOf('if (page.hasMore && newItems.length === 0)');
+
+  assert.ok(stallStart >= 0);
+  assert.doesNotMatch(source.slice(stallStart, stallStart + 300), /noMoreData\.value = true/);
+  assert.match(source, /paginationError/);
+  assert.match(source, /!paginationError\.value/);
+});
+
+test('album cache insertion is atomic and never overwrites an occupied article key', async () => {
+  const source = await readFile(new URL('../pages/dashboard/album.vue', import.meta.url), 'utf8');
+
+  assert.match(source, /db\.transaction\('rw', db\.article/);
+  assert.match(source, /bulkAdd\(/);
+  assert.doesNotMatch(source, /bulkPut\(/);
+  assert.match(source, /resolvedUrls/);
+});
+
 test('obsolete HTML-only album batch composable is removed', async () => {
   await assert.rejects(
     access(new URL('../composables/useBatchDownload.ts', import.meta.url)),

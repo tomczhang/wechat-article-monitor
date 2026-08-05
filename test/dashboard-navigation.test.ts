@@ -8,6 +8,7 @@ test('monitor header selects an addable Credential inline', async () => {
   assert.match(source, /v-model="selectedCredentialToAdd"/);
   assert.match(source, /:options="addableCredentials"/);
   assert.match(source, /@update:model-value="onCredentialSelected"/);
+  assert.match(source, /<span v-else[^>]*>[\s\S]*选择 Credential 加入监控/);
   assert.doesNotMatch(source, /showCredentialPicker/);
   assert.doesNotMatch(source, /添加监控公众号/);
 });

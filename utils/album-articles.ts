@@ -50,6 +50,7 @@ export function buildAlbumArticleStub(fakeid: string, album: AppMsgAlbumInfo, it
     has_red_packet_cover: 0,
     is_deleted: false,
     is_pay_subscribe: toNumber(item.is_pay_subscribe),
+    wecoin_count: 0,
     item_show_type: toNumber(item.item_show_type),
     itemidx,
     link: item.url,
@@ -68,15 +69,21 @@ export function selectMissingAlbumArticleStubs(
   existingUrls: ReadonlySet<string>,
   fakeid: string,
   album: AppMsgAlbumInfo,
-  items: ArticleItem[]
+  items: ArticleItem[],
+  existingKeys: ReadonlySet<string> = new Set()
 ): AppMsgExWithFakeID[] {
   const seenUrls = new Set(existingUrls);
+  const seenKeys = new Set(existingKeys);
   const missing: AppMsgExWithFakeID[] = [];
 
   for (const item of items) {
     if (!item.url || seenUrls.has(item.url)) continue;
     seenUrls.add(item.url);
-    missing.push(buildAlbumArticleStub(fakeid, album, item));
+    const stub = buildAlbumArticleStub(fakeid, album, item);
+    const key = `${stub.fakeid}:${stub.aid}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    missing.push(stub);
   }
 
   return missing;

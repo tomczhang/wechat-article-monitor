@@ -215,6 +215,7 @@ const articleLoading = ref(false);
 const switchSortLoading = ref(false);
 const preparingAlbum = ref(false);
 const noMoreData = ref(false);
+const paginationError = ref<string | null>(null);
 const controller = ref<AbortController | null>(null);
 
 const originalAlbumURL = computed(() => {
@@ -231,6 +232,7 @@ watch(selectedAlbum, album => {
   albumArticles.length = 0;
   albumBaseInfo.value = null;
   noMoreData.value = false;
+  paginationError.value = null;
   isReverse.value = true;
   articleLoading.value = false;
   switchSortLoading.value = false;
@@ -305,6 +307,7 @@ async function getFirstPageAlbumData(refreshPage = true) {
     albumBaseInfo.value = page.baseInfo;
     albumArticles.splice(0, albumArticles.length, ...page.items);
     noMoreData.value = !page.hasMore;
+    paginationError.value = null;
   } finally {
     albumLoading.value = false;
     switchSortLoading.value = false;
@@ -343,13 +346,14 @@ async function loadMoreData() {
     const seenUrls = new Set(albumArticles.map(item => item.url));
     const newItems = page.items.filter(item => item.url && !seenUrls.has(item.url));
     if (page.hasMore && newItems.length === 0) {
-      noMoreData.value = true;
-      toast.error('合集加载已停止', '分页未取得新文章，请稍后重试');
+      paginationError.value = '合集分页未取得新文章，请稍后重试';
+      toast.error('合集加载已停止', paginationError.value);
       return;
     }
 
     albumArticles.push(...newItems);
     noMoreData.value = !page.hasMore;
+    paginationError.value = null;
   } catch (error) {
     if (!isAbortError(error)) toast.error('合集加载失败', getErrorMessage(error));
   } finally {
@@ -358,7 +362,7 @@ async function loadMoreData() {
 }
 
 function onElementVisibility(visible: boolean) {
-  if (visible && !noMoreData.value && !articleLoading.value && !preparingAlbum.value) {
+  if (visible && !noMoreData.value && !paginationError.value && !articleLoading.value && !preparingAlbum.value) {
     loadMoreData().catch(error => {
       console.warn(error);
     });
@@ -369,23 +373,43 @@ async function cacheMissingAlbumArticles(
   account: AccountInfo,
   album: AppMsgAlbumInfo,
   items: ArticleItem[]
-): Promise<void> {
-  const urls = [...new Set(items.map(item => item.url).filter(Boolean))];
-  if (urls.length === 0) return;
+): Promise<Map<string, string>> {
+  const itemsWithUrls = items.filter(item => item.url);
+  const urls = [...new Set(itemsWithUrls.map(item => item.url))];
+  if (urls.length === 0) return new Map();
 
-  const existing = await db.article.where('link').anyOf(urls).toArray();
-  const missing = selectMissingAlbumArticleStubs(
-    new Set(existing.map(article => article.link)),
-    account.fakeid,
-    album,
-    items
-  );
-  if (missing.length === 0) return;
+  return db.transaction('rw', db.article, async () => {
+    const existingByUrl = await db.article.where('link').anyOf(urls).toArray();
+    const exactUrlRecords = new Map(existingByUrl.map(article => [article.link, article]));
+    const candidateKeys = itemsWithUrls.map(item => `${account.fakeid}:${item.msgid}_${item.itemidx}`);
+    const existingByKey = await db.article.bulkGet(candidateKeys);
+    const occupiedKeys = new Set(candidateKeys.filter((_key, index) => existingByKey[index] !== undefined));
+    const missing = selectMissingAlbumArticleStubs(
+      new Set(existingByUrl.map(article => article.link)),
+      account.fakeid,
+      album,
+      itemsWithUrls,
+      occupiedKeys
+    );
 
-  await db.article.bulkPut(
-    missing,
-    missing.map(article => `${article.fakeid}:${article.aid}`)
-  );
+    if (missing.length > 0) {
+      await db.article.bulkAdd(
+        missing,
+        missing.map(article => `${article.fakeid}:${article.aid}`)
+      );
+    }
+
+    const insertedUrlsByKey = new Map(missing.map(article => [`${article.fakeid}:${article.aid}`, article.link]));
+    const resolvedUrls = new Map<string, string>();
+    itemsWithUrls.forEach((item, index) => {
+      const key = candidateKeys[index];
+      resolvedUrls.set(
+        item.url,
+        exactUrlRecords.get(item.url)?.link || existingByKey[index]?.link || insertedUrlsByKey.get(key) || item.url
+      );
+    });
+    return resolvedUrls;
+  });
 }
 
 async function prepareAlbumArticles(): Promise<string[] | null> {
@@ -394,6 +418,7 @@ async function prepareAlbumArticles(): Promise<string[] | null> {
   if (!account || !album || albumArticles.length === 0) return null;
 
   preparingAlbum.value = true;
+  paginationError.value = null;
   const reverse = isReverse.value;
   try {
     const completeArticles = await collectCompleteAlbum([...albumArticles], !noMoreData.value, async cursor => {
@@ -411,10 +436,14 @@ async function prepareAlbumArticles(): Promise<string[] | null> {
 
     albumArticles.splice(0, albumArticles.length, ...completeArticles);
     noMoreData.value = true;
-    await cacheMissingAlbumArticles(account, album, completeArticles);
-    return completeArticles.map(item => item.url);
+    paginationError.value = null;
+    const resolvedUrls = await cacheMissingAlbumArticles(account, album, completeArticles);
+    return [...new Set(completeArticles.map(item => resolvedUrls.get(item.url) || item.url))];
   } catch (error) {
-    if (!isAbortError(error)) toast.error('完整合集准备失败', getErrorMessage(error));
+    if (!isAbortError(error)) {
+      paginationError.value = getErrorMessage(error);
+      toast.error('完整合集准备失败', paginationError.value);
+    }
     return null;
   } finally {
     preparingAlbum.value = false;
