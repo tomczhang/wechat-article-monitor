@@ -54,7 +54,7 @@ const isEmpty = computed(() => watches.value.length === 0 && validCredentials.va
 const proxyEndpoint = computed(() => `127.0.0.1:${serviceStatus.value.port}`);
 
 // —— 从凭证添加公众号 ——
-const showCredentialPicker = ref(false);
+const selectedCredentialToAdd = ref<ParsedCredential | undefined>();
 const addingWatchBiz = ref<string | null>(null);
 
 async function addFromCredential(cred: ParsedCredential) {
@@ -68,6 +68,15 @@ async function addFromCredential(cred: ParsedCredential) {
     });
   } finally {
     addingWatchBiz.value = null;
+  }
+}
+
+async function onCredentialSelected(cred?: ParsedCredential) {
+  if (!cred) return;
+  try {
+    await addFromCredential(cred);
+  } finally {
+    selectedCredentialToAdd.value = undefined;
   }
 }
 
@@ -237,11 +246,48 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="flex items-center gap-2">
-          <UButton icon="i-lucide:plus" color="black" @click="showCredentialPicker = true">
-            添加公众号
-          </UButton>
-        </div>
+        <USelectMenu
+          v-model="selectedCredentialToAdd"
+          :options="addableCredentials"
+          option-attribute="nickname"
+          size="md"
+          color="gray"
+          class="w-full sm:w-80"
+          :disabled="addableCredentials.length === 0 || addingWatchBiz !== null"
+          :loading="addingWatchBiz !== null"
+          :placeholder="addableCredentials.length > 0 ? '选择 Credential 加入监控' : '暂无可添加 Credential'"
+          @update:model-value="onCredentialSelected"
+        >
+          <template #label>
+            <div v-if="selectedCredentialToAdd" class="flex min-w-0 flex-1 items-center gap-2">
+              <UAvatar
+                :src="selectedCredentialToAdd.avatar"
+                :alt="selectedCredentialToAdd.nickname || selectedCredentialToAdd.biz"
+                size="2xs"
+              />
+              <span class="min-w-0 flex-1 truncate text-left font-medium">
+                {{ selectedCredentialToAdd.nickname || selectedCredentialToAdd.biz }}
+              </span>
+            </div>
+          </template>
+
+          <template #option="{ option: cred }">
+            <div class="flex min-w-0 flex-1 items-center gap-3 py-1">
+              <UAvatar :src="cred.avatar" :alt="cred.nickname || cred.biz" size="sm" />
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                  {{ cred.nickname || cred.biz }}
+                </p>
+                <p class="mt-0.5 truncate font-mono text-[11px] text-slate-400">{{ cred.biz }}</p>
+              </div>
+              <CredentialExpiryBar :timestamp="cred.timestamp" class="w-28 shrink-0" />
+            </div>
+          </template>
+
+          <template #empty>
+            <div class="px-2 py-3 text-sm text-slate-500">暂无可加入监控的有效 Credential</div>
+          </template>
+        </USelectMenu>
       </header>
 
       <!-- 主内容区 -->
@@ -337,8 +383,8 @@ onUnmounted(() => {
               class="flex flex-col items-center justify-center py-12 px-4 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg text-center"
             >
               <UIcon name="i-lucide:radar" class="text-3xl text-slate-300 mb-2" />
-              <p class="text-sm text-slate-500 mb-3">暂无监控公众号</p>
-              <UButton size="sm" color="black" variant="soft" @click="showCredentialPicker = true">从 Credential 添加</UButton>
+              <p class="text-sm text-slate-500">暂无监控公众号</p>
+              <p class="mt-1 text-xs text-slate-400">请从右上角选择可用 Credential 加入监控</p>
             </div>
 
             <div
@@ -695,63 +741,5 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-
-    <!-- 添加公众号：从已抓取 Credential 选择 -->
-    <UModal v-model="showCredentialPicker">
-      <UCard>
-        <template #header>
-          <BaseModalHeader
-            title="添加监控公众号"
-            description="从已抓取的有效 Credential 中选择要监控的公众号。"
-            @close="showCredentialPicker = false"
-          />
-        </template>
-
-        <div class="space-y-4">
-          <!-- 无可添加凭证：给出抓取引导 -->
-          <div
-            v-if="addableCredentials.length === 0"
-            class="space-y-3 rounded-lg border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500 dark:border-slate-600"
-          >
-            <div class="flex items-center gap-2">
-              <span
-                class="size-2.5 rounded-full"
-                :class="serviceStatus.running ? 'bg-emerald-500' : 'bg-rose-400'"
-              />
-              <span>抓包服务{{ serviceStatus.running ? '已就绪' : '未启动 (需安装 mitmproxy)' }}</span>
-            </div>
-            <p class="leading-relaxed">
-              将系统代理设为
-              <code class="rounded-md bg-slate-100 px-1 font-mono dark:bg-slate-800">{{ proxyEndpoint }}</code>，
-              在微信中打开目标公众号的任意文章，凭证会自动出现在此处。
-              <template v-if="validCredentials.length > 0">当前所有有效凭证均已在监控中。</template>
-            </p>
-          </div>
-
-          <ul v-else class="max-h-96 space-y-1 overflow-y-auto">
-            <li
-              v-for="cred in addableCredentials"
-              :key="cred.biz"
-              class="flex items-center gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700"
-            >
-              <img v-if="cred.avatar" :src="cred.avatar" class="size-10 flex-shrink-0 rounded-full object-cover" />
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-sm font-medium">{{ cred.nickname || cred.biz }}</p>
-                <p class="truncate font-mono text-xs text-slate-400">{{ cred.biz }}</p>
-              </div>
-              <CredentialExpiryBar :timestamp="cred.timestamp" class="w-32 flex-shrink-0" />
-              <UButton
-                size="xs"
-                color="black"
-                :loading="addingWatchBiz === cred.biz"
-                @click="addFromCredential(cred)"
-              >
-                加入监控
-              </UButton>
-            </li>
-          </ul>
-        </div>
-      </UCard>
-    </UModal>
   </div>
 </template>
