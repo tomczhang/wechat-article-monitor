@@ -4,6 +4,12 @@ export default defineNuxtConfig({
   devtools: {
     enabled: false,
   },
+  experimental: {
+    // This is a client-only app and does not consume client-side route rules.
+    // Disabling the manifest also avoids a Nuxt dev startup race where Vite
+    // resolves #app-manifest before Nitro has generated manifest/meta/dev.json.
+    appManifest: false,
+  },
   modules: ['@vueuse/nuxt', '@nuxt/ui', 'nuxt-monaco-editor', '@sentry/nuxt/module', 'nuxt-umami'],
   ssr: false,
   runtimeConfig: {

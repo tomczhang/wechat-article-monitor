@@ -10,7 +10,7 @@ import type { Metadata } from '~/store/v2/metadata';
 import { updateMetadataCache } from '~/store/v2/metadata';
 import type { CommentResponse, ReplyResponse } from '~/types/comment';
 import type { Preferences } from '~/types/preferences';
-import { findValidCredential } from '~/utils/credentials';
+import { requireValidCredential, throwCredentialRequired } from '~/utils/credentials';
 import { BaseDownloader } from '~/utils/download/BaseDownloader';
 import type { DownloadOptions } from './types';
 
@@ -396,11 +396,9 @@ export class Downloader extends BaseDownloader {
               continue_flag = response.continue_flag;
               continue download_comment;
             }
-            throwException(
-              `文章有 ${response.elected_comment_total_cnt} 条评论但未返回数据，Credential 可能已过期，请刷新凭证后重试`
-            );
+            throwCredentialRequired(article.fakeid, `文章有 ${response.elected_comment_total_cnt} 条评论但未返回数据`);
           } else {
-            throwException(`文章(url: ${url} )的评论(${cached.commentID})获取失败，ret: ${response.base_resp.ret}`);
+            throwCredentialRequired(article.fakeid, `评论获取失败，ret: ${response.base_resp.ret}`);
           }
         } catch (error) {
           await this.handleDownloadFailure(proxy, url, attempt, error);
@@ -453,7 +451,7 @@ export class Downloader extends BaseDownloader {
             continue download_comment_reply;
           } else {
             // 留言下载失败
-            throwException(`文章(url: ${url} )的评论回复(${cached.commentID})获取失败`);
+            throwCredentialRequired(article.fakeid, `评论回复获取失败，ret: ${response.base_resp.ret}`);
           }
         } catch (error) {
           await this.handleDownloadFailure(proxy, url, attempt, error);
@@ -484,10 +482,7 @@ export class Downloader extends BaseDownloader {
 
     try {
       // 使用设置的 credentials 来抓取留言
-      const targetCredential = findValidCredential(fakeid);
-      if (!targetCredential) {
-        throw new Error('目标公众号的 Credential 未设置');
-      }
+      const targetCredential = requireValidCredential(fakeid);
 
       const Authorization = (preferences.value as Preferences).privateProxyAuthorization || '';
       const url = `https://mp.weixin.qq.com/mp/appmsg_comment?action=getcomment&scene=0&appmsgid=${appmsgid}&idx=${itemidx}&__biz=${targetCredential.biz}&comment_id=${commentID}&uin=${targetCredential.uin}&key=${targetCredential.key}&pass_ticket=${encodeURIComponent(targetCredential.pass_ticket)}&appmsg_token=${encodeURIComponent(targetCredential.appmsg_token)}&wxtoken=777&devicetype=UnifiedPCMac&comment_scene=0&buffer=${buffer}&offset=0&limit=100&x5=0&f=json`;
@@ -533,10 +528,7 @@ export class Downloader extends BaseDownloader {
 
     try {
       // 使用设置的 credentials 来抓取留言
-      const targetCredential = findValidCredential(fakeid);
-      if (!targetCredential) {
-        throw new Error('目标公众号的 Credential 未设置');
-      }
+      const targetCredential = requireValidCredential(fakeid);
 
       const Authorization = (preferences.value as Preferences).privateProxyAuthorization || '';
       const url = `https://mp.weixin.qq.com/mp/appmsg_comment?action=getcommentreply&scene=0&appmsgid=${appmsgid}&idx=${itemidx}&__biz=${targetCredential.biz}&comment_id=${commentID}&uin=${targetCredential.uin}&key=${targetCredential.key}&pass_ticket=${encodeURIComponent(targetCredential.pass_ticket)}&appmsg_token=${encodeURIComponent(targetCredential.appmsg_token)}&wxtoken=777&devicetype=UnifiedPCMac&content_id=${contentID}&max_reply_id=${maxReplyID}&limit=100&x5=0&f=json`;

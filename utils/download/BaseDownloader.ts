@@ -3,7 +3,7 @@ import usePreferences from '~/composables/usePreferences';
 import { PUBLIC_PROXY_LIST } from '~/config/public-proxy';
 import type { Preferences } from '~/types/preferences';
 import { bestConcurrencyCount } from '~/utils';
-import { findValidCredential } from '~/utils/credentials';
+import { requireValidCredential } from '~/utils/credentials';
 import { DEFAULT_OPTIONS } from './constants';
 import { ProxyManager } from './ProxyManager';
 import type { Callback, DownloaderStatus, DownloadOptions } from './types';
@@ -149,10 +149,8 @@ export class BaseDownloader {
 
       // 使用设置的 credentials 来抓取元数据
       if (withCredential) {
-        const targetCredential = findValidCredential(fakeid);
-        if (targetCredential) {
-          headers.cookie = `pass_ticket=${targetCredential.pass_ticket};wap_sid2=${targetCredential.wap_sid2}`;
-        }
+        const targetCredential = requireValidCredential(fakeid);
+        headers.cookie = `pass_ticket=${targetCredential.pass_ticket};wap_sid2=${targetCredential.wap_sid2}`;
       }
 
       const Authorization = (preferences.value as Preferences).privateProxyAuthorization || '';
@@ -188,9 +186,6 @@ export class BaseDownloader {
 
   // 当获取阅读量和留言数据时，需要验证 Credential 是否设置正确
   protected validateCredential(fakeid: string): void {
-    const targetCredential = findValidCredential(fakeid);
-    if (!targetCredential) {
-      throw new Error('目标公众号的 Credential 未设置');
-    }
+    requireValidCredential(fakeid);
   }
 }

@@ -22,7 +22,6 @@ const credentials = useLocalStorage<ParsedCredential[]>('auto-detect-credentials
 
 export default function useAccountDiscovery() {
   const toast = toastFactory();
-  const loginAccount = useLoginAccount();
   const commentMonitor = useCommentMonitor();
 
   function getWatchName(fakeid: string) {
@@ -30,7 +29,7 @@ export default function useAccountDiscovery() {
   }
 
   function isCredentialExpiredError(error: Error) {
-    return /未登录或登录已过期|session expired/i.test(error.message);
+    return /Credential|未检测到|已失效|未登录或登录已过期|session expired/i.test(error.message);
   }
 
   async function refreshWatches() {
@@ -105,8 +104,7 @@ export default function useAccountDiscovery() {
       toast.error('监控失败', `【${getWatchName(fakeid)}】${error.message}`);
       if (isCredentialExpiredError(error)) {
         stopDiscovery();
-        loginAccount.value = null;
-        toast.warning('新文章发现已暂停', '公众号后台登录已过期，请重新扫码登录');
+        toast.warning('新文章发现已暂停', '该公众号的 Credential 已失效，请在微信中重新打开其任意一篇文章以刷新凭证');
       }
     });
   }

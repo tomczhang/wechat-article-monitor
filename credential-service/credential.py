@@ -7,6 +7,29 @@ from typing import Optional
 from bs4 import BeautifulSoup
 
 
+def first_text(soup, selectors):
+    for selector in selectors:
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        value = node.get("content") if node.name == "meta" else node.get_text(strip=True)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def first_attribute(soup, selectors, attributes):
+    for selector in selectors:
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        for attribute in attributes:
+            value = node.get(attribute)
+            if value and value.strip():
+                return value.strip()
+    return None
+
+
 class ExtractWxCredentials:
     def __init__(self):
         self.cookies = {}
@@ -38,20 +61,33 @@ class ExtractWxCredentials:
                 if flow.response.content:
                     try:
                         soup = BeautifulSoup(flow.response.content, 'html.parser')
-                        name_tag = soup.css.select_one('.wx_follow_nickname')
-                        avatar_tag = soup.css.select_one('.wx_follow_avatar > img.wx_follow_avatar_pic')
-                        if name_tag:
-                            name = name_tag.get_text(strip=True)
-                        if avatar_tag:
-                            avatar = avatar_tag['src']
+                        name = first_text(
+                            soup,
+                            [
+                                '.wx_follow_nickname',
+                                '#js_name',
+                                'meta[property="og:article:author"]',
+                                'meta[name="author"]',
+                            ],
+                        )
+                        avatar = first_attribute(
+                            soup,
+                            [
+                                '.wx_follow_avatar > img.wx_follow_avatar_pic',
+                                'img.wx_follow_avatar_pic',
+                                '#js_profile_qrcode_img',
+                            ],
+                            ['src', 'data-src'],
+                        )
                     except Exception as e:
                         print(f"Error parsing HTML: {e}")
 
                 if set_cookie_header:
+                    previous = self.cookies.get(biz, {})
                     self.cookies[biz] = {
                         "biz": biz,
-                        "name": name,
-                        "avatar": avatar,
+                        "name": name or previous.get("name"),
+                        "avatar": avatar or previous.get("avatar"),
                         "url": flow.request.url,
                         "set_cookie": set_cookie_header,
                         "timestamp": int(time.time() * 1000),

@@ -20,17 +20,23 @@ import GridAlbum from '~/components/grid/Album.vue';
 import GridArticleActions from '~/components/grid/ArticleActions.vue';
 import GridCoverTooltip from '~/components/grid/CoverTooltip.vue';
 import GridStatusBar from '~/components/grid/StatusBar.vue';
+import ConfirmModal from '~/components/modal/Confirm.vue';
 import AccountSelectorForArticle from '~/components/selector/AccountSelectorForArticle.vue';
+import toastFactory from '~/composables/toast';
+import useCredentialGate from '~/composables/useCredentialGate';
+import { watchArticleTableReloads } from '~/composables/watchArticleTableReloads';
 import { isDev, websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
+import { deleteAccountData } from '~/store/v2';
 import { articleDeleted, getArticleCache, updateArticleStatus } from '~/store/v2/article';
 import { getCommentCache } from '~/store/v2/comment';
 import { getDebugCache } from '~/store/v2/debug';
 import { getHtmlCache } from '~/store/v2/html';
-import { type MpAccount } from '~/store/v2/info';
 import { getMetadataCache, type Metadata } from '~/store/v2/metadata';
+import type { CredentialAccount } from '~/types/credential';
 import type { Preferences } from '~/types/preferences';
 import type { AppMsgExWithFakeID } from '~/types/types';
+import { isAccountActionLocked, runManualSyncAttempt } from '~/utils/account-sync';
 import type { ArticleMetadata } from '~/utils/download/types';
 import { createBooleanColumnFilterParams, createDateColumnFilterParams } from '~/utils/grid';
 import { collapseReposts } from '~/utils/repost';
@@ -321,6 +327,7 @@ function onGridReady(params: GridReadyEvent) {
   gridApi.value = params.api;
 
   restoreColumnState();
+  gridApi.value.setGridOption('rowData', globalRowData);
 }
 
 function onColumnStateChange() {
@@ -349,6 +356,18 @@ function onFilterChanged(event: FilterChangedEvent) {
 }
 
 const preferences = usePreferences();
+const toast = toastFactory();
+const modal = useModal();
+const {
+  credentialAccounts,
+  autoSyncingBiz,
+  clearAutoSyncError,
+  markCredentialInitialized,
+  refreshAccountInfos,
+  runAccountOperation,
+} = useCredentials();
+const { openGate } = useCredentialGate();
+const { getSyncRangeLabel, isSyncAll } = useSyncDeadline();
 const hideDeleted = computed(() => (preferences.value as unknown as Preferences).hideDeleted);
 const shouldCollapseReposts = computed(() => (preferences.value as unknown as Preferences).collapseReposts);
 
@@ -359,42 +378,79 @@ function preview(article: Article) {
 }
 
 const loading = ref(false);
+let tableLoadVersion = 0;
 
-// 只能选择单个账号
-const selectedAccount = ref<MpAccount | undefined>();
+// 文章表格一次只展示一个 Credential 对应的公众号
+const selectedAccount = ref<CredentialAccount | undefined>();
+const selectedCredentialValid = computed(() => selectedAccount.value?.credentialValid === true);
+const { isSyncing: accountSyncing, lastSyncedPage, syncAccount, stop: stopAccountSync } = useAccountArticleSync();
 
-watch(selectedAccount, newVal => {
-  switchTableData(newVal!.fakeid).catch(() => {});
+watch(
+  credentialAccounts,
+  accounts => {
+    const currentBiz = selectedAccount.value?.fakeid;
+    const current = currentBiz ? accounts.find(account => account.fakeid === currentBiz) : undefined;
+    selectedAccount.value = current || accounts.find(account => account.credentialValid) || accounts[0];
+  },
+  { immediate: true }
+);
+
+watchArticleTableReloads({
+  selectedAccount,
+  autoSyncingBiz,
+  lastSyncedPage,
+  onAccountUnavailable() {
+    tableLoadVersion++;
+    loading.value = false;
+    globalRowData = [];
+    gridApi.value?.setGridOption('rowData', []);
+  },
+  onReload(fakeid) {
+    switchTableData(fakeid).catch(error => {
+      toast.error('读取文章失败', error?.message || '未知错误');
+    });
+  },
+  onPageSynced(fakeid) {
+    switchTableData(fakeid, { showLoading: false }).catch(error => {
+      toast.error('读取文章失败', error?.message || '未知错误');
+    });
+  },
 });
 
-async function switchTableData(fakeid: string) {
-  loading.value = true;
-  const articles: Article[] = [];
-  const data = await getArticleCache(fakeid, Math.floor(Date.now() / 1000));
-  for (const article of data) {
-    const contentDownload = (await getHtmlCache(article.link)) !== undefined;
-    const commentDownload = (await getCommentCache(article.link)) !== undefined;
-    const metadata = await getMetadataCache(article.link);
-    if (metadata) {
-      articles.push({
-        ...metadata,
-        ...article,
-        contentDownload: contentDownload,
-        commentDownload: commentDownload,
-      });
-    } else {
-      articles.push({
-        ...article,
-        contentDownload: contentDownload,
-        commentDownload: commentDownload,
-      });
+async function switchTableData(fakeid: string, options: { showLoading?: boolean } = {}) {
+  const showLoading = options.showLoading ?? true;
+  const loadVersion = ++tableLoadVersion;
+  if (showLoading) loading.value = true;
+  try {
+    const articles: Article[] = [];
+    const data = await getArticleCache(fakeid, Math.floor(Date.now() / 1000));
+    for (const article of data) {
+      const contentDownload = (await getHtmlCache(article.link)) !== undefined;
+      const commentDownload = (await getCommentCache(article.link)) !== undefined;
+      const metadata = await getMetadataCache(article.link);
+      if (metadata) {
+        articles.push({
+          ...metadata,
+          ...article,
+          contentDownload: contentDownload,
+          commentDownload: commentDownload,
+        });
+      } else {
+        articles.push({
+          ...article,
+          contentDownload: contentDownload,
+          commentDownload: commentDownload,
+        });
+      }
     }
+    if (showLoading) await sleep(200);
+    if (loadVersion !== tableLoadVersion) return;
+    const visible = articles.filter(article => (hideDeleted.value ? !article.is_deleted : true));
+    globalRowData = shouldCollapseReposts.value ? collapseReposts(visible) : visible;
+    gridApi.value?.setGridOption('rowData', globalRowData);
+  } finally {
+    if (loadVersion === tableLoadVersion) loading.value = false;
   }
-  await sleep(200);
-  const visible = articles.filter(article => (hideDeleted.value ? !article.is_deleted : true));
-  globalRowData = shouldCollapseReposts.value ? collapseReposts(visible) : visible;
-  gridApi.value?.setGridOption('rowData', globalRowData);
-  loading.value = false;
 }
 
 function updateRow(article: Article) {
@@ -502,6 +558,99 @@ const {
   exportFile,
 } = useExporter();
 
+const isDeletingAccountData = ref(false);
+const accountActionLocked = computed(() =>
+  isAccountActionLocked({
+    autoSyncingBiz: autoSyncingBiz.value,
+    manuallySyncing: accountSyncing.value,
+    deleting: isDeletingAccountData.value,
+  })
+);
+
+async function syncSelectedAccount() {
+  const account = selectedAccount.value;
+  if (!account || accountActionLocked.value) return;
+  if (!account.credentialValid) {
+    openGate({ fakeid: account.fakeid, refresh: true });
+    return;
+  }
+
+  try {
+    await runAccountOperation('manual-sync', account.fakeid, () =>
+      runManualSyncAttempt({
+        sync: () => syncAccount(account),
+        markInitialized() {
+          markCredentialInitialized(account.fakeid);
+          clearAutoSyncError(account.fakeid);
+        },
+      })
+    );
+    await refreshAccountInfos();
+    const rangeHint = isSyncAll() ? '' : `（同步范围：${getSyncRangeLabel()}）`;
+    toast.success('同步完成', `已同步【${account.nickname}】${rangeHint}`);
+  } catch (error: any) {
+    if (error?.message === '已取消同步') {
+      toast.warning('同步已停止', `已停止同步【${account.nickname}】`);
+      return;
+    }
+    toast.error('同步失败', error?.message || '未知错误');
+  }
+}
+
+function captureSelectedCredential() {
+  if (accountActionLocked.value) return;
+  openGate({ fakeid: selectedAccount.value?.fakeid, refresh: true });
+}
+
+function downloadSelectedArticles(type: 'html' | 'metadata' | 'comment') {
+  const account = selectedAccount.value;
+  if (!account || isDeletingAccountData.value) return;
+  if (type !== 'html' && !account.credentialValid) {
+    openGate({ fakeid: account.fakeid, refresh: true });
+    return;
+  }
+  download(type, selectedArticleUrls.value);
+}
+
+type ArticleExportType = Parameters<typeof exportFile>[0];
+function exportSelectedArticles(type: ArticleExportType, requiresContent = false) {
+  if (!selectedAccount.value || isDeletingAccountData.value) return;
+  exportFile(type, selectedArticleUrls.value, requiresContent ? contentNotDownloadedCount.value : undefined);
+}
+
+function deleteCurrentAccountData() {
+  const account = selectedAccount.value;
+  if (!account || accountActionLocked.value || downloadBtnLoading.value || exportBtnLoading.value) return;
+
+  modal.open(ConfirmModal, {
+    title: `删除【${account.nickname}】的本地数据？`,
+    description: '已缓存的文章、留言、HTML 和资源将被清空；Credential 记录仍会保留在公众号列表中。',
+    async onConfirm() {
+      if (downloadBtnLoading.value || exportBtnLoading.value) {
+        toast.warning('暂时无法删除', '请等待当前抓取或导出任务结束后重试');
+        return;
+      }
+
+      try {
+        isDeletingAccountData.value = true;
+        await runAccountOperation('delete', account.fakeid, async () => {
+          markCredentialInitialized(account.fakeid);
+          await nextTick();
+          await deleteAccountData([account.fakeid]);
+          selectedArticles.value = [];
+          await refreshAccountInfos();
+          await switchTableData(account.fakeid);
+        });
+        toast.success('本地数据已删除', `已清空【${account.nickname}】的缓存`);
+      } catch (error: any) {
+        toast.error('删除失败', error?.message || '未知错误');
+      } finally {
+        isDeletingAccountData.value = false;
+      }
+    },
+  });
+}
+
 async function debug() {
   const cache = await getDebugCache('https://mp.weixin.qq.com/s/0IEaqpJIBGykHFKqj-7xqw');
   console.log(cache);
@@ -527,19 +676,66 @@ function copyWechatLink() {
 
 <template>
   <div class="h-full">
-    <Teleport defer to="#title">
-      <h1 class="text-[28px] leading-[34px] text-slate-12 dark:text-slate-50 font-bold">文章下载</h1>
-    </Teleport>
+    <BasePageTitle title="文章下载" eyebrow="公众号内容库" />
 
     <div class="flex flex-col h-full divide-y divide-gray-200">
       <!-- 顶部筛选与操作区 -->
-      <header class="flex flex-col items-start lg:flex-row lg:items-center lg:justify-between gap-2 px-3 py-2">
-        <div class="flex flex-col xl:flex-row gap-2">
-          <div class="flex space-x-3">
-            <AccountSelectorForArticle v-model="selectedAccount" class="w-80" />
-          </div>
+      <header class="flex flex-col gap-3 px-3 py-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div class="flex w-full flex-wrap items-center gap-2 2xl:w-auto">
+          <AccountSelectorForArticle
+            v-model="selectedAccount"
+            :disabled="accountActionLocked"
+            class="w-full sm:w-[26rem]"
+          />
+
+          <UButton
+            v-if="accountSyncing"
+            color="black"
+            icon="i-lucide:square"
+            class="active:scale-[0.98]"
+            @click="stopAccountSync"
+          >
+            停止同步
+          </UButton>
+          <UButton
+            v-else
+            color="black"
+            icon="i-lucide:refresh-cw"
+            :loading="autoSyncingBiz !== null"
+            :disabled="accountActionLocked || !selectedAccount || !selectedCredentialValid"
+            class="active:scale-[0.98]"
+            @click="syncSelectedAccount"
+          >
+            {{ autoSyncingBiz ? '首次同步最新一页' : '同步当前公众号' }}
+          </UButton>
+
+          <UButton
+            v-if="selectedAccount && !selectedCredentialValid"
+            color="gray"
+            variant="soft"
+            icon="i-lucide:shield-alert"
+            :disabled="accountActionLocked"
+            class="active:scale-[0.98]"
+            @click="captureSelectedCredential"
+          >
+            更新 Credential
+          </UButton>
+
+          <UButton
+            v-if="selectedAccount"
+            color="rose"
+            variant="soft"
+            icon="i-lucide:trash-2"
+            :loading="isDeletingAccountData"
+            :disabled="accountActionLocked || downloadBtnLoading || exportBtnLoading"
+            class="active:scale-[0.98]"
+            @click="deleteCurrentAccountData"
+          >
+            删除本地数据
+          </UButton>
         </div>
-        <div class="flex items-center space-x-2">
+
+        <div class="flex w-full flex-wrap items-center gap-2 2xl:w-auto 2xl:justify-end">
           <UButton v-if="downloadBtnLoading" color="black" @click="stopDownload">停止</UButton>
           <ButtonGroup
             :items="[
@@ -547,13 +743,13 @@ function copyWechatLink() {
               { label: '阅读量 (需要Credential)', event: 'download-article-metadata' },
               { label: '留言内容 (需要Credential)', event: 'download-article-comment' },
             ]"
-            @download-article-html="download('html', selectedArticleUrls)"
-            @download-article-metadata="download('metadata', selectedArticleUrls)"
-            @download-article-comment="download('comment', selectedArticleUrls)"
+            @download-article-html="downloadSelectedArticles('html')"
+            @download-article-metadata="downloadSelectedArticles('metadata')"
+            @download-article-comment="downloadSelectedArticles('comment')"
           >
             <UButton
               :loading="downloadBtnLoading"
-              :disabled="!selectedAccount"
+              :disabled="!selectedAccount || isDeletingAccountData"
               color="white"
               class="font-mono"
               :label="downloadBtnLoading ? `抓取中 ${downloadCompletedCount}/${downloadTotalCount}` : '抓取'"
@@ -571,17 +767,17 @@ function copyWechatLink() {
               { label: 'Word (内测中)', event: 'export-article-word' },
               { label: 'PDF (内测中)', event: 'export-article-pdf' },
             ]"
-            @export-article-excel="exportFile('excel', selectedArticleUrls)"
-            @export-article-json="exportFile('json', selectedArticleUrls)"
-            @export-article-html="exportFile('html', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-text="exportFile('text', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-markdown="exportFile('markdown', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-word="exportFile('word', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-pdf="exportFile('pdf', selectedArticleUrls, contentNotDownloadedCount)"
+            @export-article-excel="exportSelectedArticles('excel')"
+            @export-article-json="exportSelectedArticles('json')"
+            @export-article-html="exportSelectedArticles('html', true)"
+            @export-article-text="exportSelectedArticles('text', true)"
+            @export-article-markdown="exportSelectedArticles('markdown', true)"
+            @export-article-word="exportSelectedArticles('word', true)"
+            @export-article-pdf="exportSelectedArticles('pdf', true)"
           >
             <UButton
               :loading="exportBtnLoading"
-              :disabled="!selectedAccount"
+              :disabled="!selectedAccount || isDeletingAccountData"
               color="white"
               class="font-mono"
               :label="exportBtnLoading ? `${exportPhase} ${exportCompletedCount}/${exportTotalCount}` : '导出'"
@@ -600,7 +796,30 @@ function copyWechatLink() {
         </div>
       </header>
 
+      <div v-if="!selectedAccount" class="flex flex-1 items-center px-6 py-12 sm:px-12">
+        <div class="max-w-xl border-l-2 border-slate-300 pl-6 dark:border-slate-700">
+          <UIcon name="i-lucide:radio-tower" class="size-8 text-slate-400" />
+          <h2 class="mt-4 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            打开一篇微信公众号文章
+          </h2>
+          <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+            平台捕获 Credential 后，会自动识别公众号名称、同步最新一页文章，并直接显示在这里。
+          </p>
+          <UButton
+            color="black"
+            icon="i-lucide:shield-check"
+            :disabled="accountActionLocked"
+            class="mt-5 active:scale-[0.98]"
+            @click="captureSelectedCredential"
+          >
+            开始获取 Credential
+          </UButton>
+        </div>
+      </div>
+
       <ag-grid-vue
+        v-else
+        class="min-h-0 flex-1"
         style="width: 100%; height: 100%"
         :loading="loading"
         :rowData="globalRowData"

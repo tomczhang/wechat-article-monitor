@@ -46,7 +46,7 @@ yarn docker:publish
 ### 关键目录
 
 - `apis/` — 客户端 API 函数定义（getArticleList、getAccountList 等）
-- `composables/` — Vue 3 组合式函数：`useDownloader.ts`（下载调度）、`useExporter.ts`（导出逻辑）、`useBatchDownload.ts`（批量下载管理）
+- `composables/` — Vue 3 组合式函数：`useDownloader.ts`（下载调度）、`useExporter.ts`（导出逻辑）
 - `store/v2/` — 基于 Dexie 的 IndexedDB 缓存（文章、评论、元数据、资源、HTML 内容）
 - `utils/download/` — 核心下载/导出类：`Downloader.ts`、`Exporter.ts`、`BaseDownloader.ts`、`ProxyManager.ts`
 - `server/api/web/mp/` — 代理微信公众平台请求的 Nitro 端点

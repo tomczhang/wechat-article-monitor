@@ -23,15 +23,10 @@
       </div>
     </template>
     <template #option-empty="{ query }">
-      未找到匹配「{{ query }}」的公众号<br />请先在「<NuxtLink
-        to="/dashboard/account"
-        class="text-blue-500 hover:underline"
-        >公众号管理</NuxtLink
-      >」中添加
+      未找到匹配「{{ query }}」的公众号<br />请先在文章下载页获取 Credential 并同步文章
     </template>
     <template #empty>
-      暂无公众号，请先在「<NuxtLink to="/dashboard/account" class="text-blue-500 hover:underline">公众号管理</NuxtLink
-      >」中添加
+      暂无公众号，请先在文章下载页获取 Credential 并同步文章
     </template>
   </USelectMenu>
 </template>

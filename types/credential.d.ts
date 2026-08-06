@@ -1,3 +1,5 @@
+import type { MpAccount } from '../store/v2/info';
+
 export interface ParsedCredential {
   nickname?: string;
   avatar?: string;
@@ -11,5 +13,12 @@ export interface ParsedCredential {
   timestamp: number;
   time?: string;
   valid: boolean;
-  added?: boolean;
+  initialized?: boolean;
+}
+
+export interface CredentialAccount extends MpAccount {
+  nickname: string;
+  credential: ParsedCredential;
+  credentialValid: boolean;
+  credentialTimestamp: number;
 }

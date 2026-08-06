@@ -1,63 +1,67 @@
 <template>
-  <div class="h-full">
-    <Teleport defer to="#title">
-      <h1 class="text-[28px] leading-[34px] text-slate-12 dark:text-slate-50 font-bold">公共代理</h1>
-    </Teleport>
+  <div class="h-full bg-slate-50/70 dark:bg-slate-950">
+    <BasePageTitle title="公共代理" eyebrow="节点运行状态" />
 
-    <div class="flex flex-col h-full divide-y divide-gray-200">
-      <!-- header -->
-      <header class="px-4 py-5 sm:px-6">
-        <div class="flex justify-between items-center mb-3">
-          <h2 class="text-2xl font-semibold">统计信息</h2>
-
-          <p class="font-serif font-bold">可用: {{ totalSuccess }}，不可用: {{ totalFailure }}</p>
-        </div>
-        <div class="flex justify-between items-center">
-          <p class="text-rose-500 text-sm">
-            警告: 公共代理资源有限，请合理使用。 若需抓取大量数据，请搭建自己的私有代理节点。<br />
-            若发现某ip存在滥用公共代理从而导致官网无法使用，将有可能被封禁。
-          </p>
-          <p class="mt-2 px-3 py-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-300 rounded-md dark:text-amber-300 dark:bg-amber-900/30 dark:border-amber-700">
-            所有代理额度将在每天早上 8:00 刷新。
-          </p>
-          <UPopover :popper="{ placement: 'left-start', arrow: true }">
+    <div class="h-full overflow-y-auto">
+      <div class="mx-auto max-w-7xl space-y-5 px-6 py-6">
+        <div class="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <UIcon name="i-lucide:triangle-alert" class="mt-0.5 size-4 shrink-0" />
+          <div class="min-w-0 flex-1 text-sm leading-6">
+            <p>公共代理资源有限，批量抓取请使用私有代理。异常高频请求可能触发 IP 限制。</p>
+            <p class="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/80">代理额度每天 08:00 刷新。</p>
+          </div>
+          <UPopover :popper="{ placement: 'bottom-end', arrow: true }">
             <UButton
-              :icon="hasBlocked ? 'i-lucide:annoyed' : 'i-lucide:smile'"
-              variant="link"
-              :color="hasBlocked ? 'rose' : 'green'"
+              :icon="hasBlocked ? 'i-lucide:shield-alert' : 'i-lucide:shield-check'"
+              color="gray"
+              variant="ghost"
+              square
+              aria-label="查看当前 IP 状态"
             />
 
             <template #panel>
-              <div class="p-4 space-y-3 max-h-80 overflow-y-scroll">
+              <div class="max-h-80 min-w-72 space-y-4 overflow-y-auto p-4 text-sm">
                 <div>
-                  <p>当前IP:</p>
-                  <code class="font-medium" :class="hasBlocked ? 'text-rose-500' : 'text-green-500'">
-                    {{ currentIP }}
+                  <p class="text-xs font-medium uppercase tracking-wide text-slate-400">当前 IP</p>
+                  <code class="mt-1 block font-medium" :class="hasBlocked ? 'text-rose-500' : 'text-emerald-600'">
+                    {{ currentIP || '检测中' }}
                   </code>
                 </div>
                 <div>
-                  <p class="flex justify-between items-center min-w-64">
-                    <span>已被封禁IP:</span>
-                    <span class="text-xs text-gray-500">若存在误伤，请联系开发者</span>
-                  </p>
-                  <ul>
+                  <div class="flex items-center justify-between gap-4">
+                    <p class="font-medium text-slate-900 dark:text-slate-100">受限 IP</p>
+                    <span class="text-xs text-slate-400">误伤请联系开发者</span>
+                  </div>
+                  <ul v-if="blockedIPS.length" class="mt-2 space-y-1">
                     <li v-for="ip in blockedIPS" :key="ip">
-                      <code class="text-rose-500">{{ ip }}</code>
+                      <code class="font-mono text-xs text-rose-500">{{ ip }}</code>
                     </li>
                   </ul>
+                  <p v-else class="mt-2 text-xs text-slate-400">暂无受限记录</p>
                 </div>
               </div>
             </template>
           </UPopover>
         </div>
-      </header>
 
-      <!-- 数据展示区 -->
-      <div class="flex-1 px-4 py-5 sm:py-6 overflow-y-scroll">
-        <div v-if="loading" class="flex justify-center items-center mt-5">
-          <Loader :size="28" class="animate-spin text-slate-500" />
-        </div>
-        <ProxyMetrics :data="metricsData" />
+        <BaseSectionCard title="代理节点" description="查看节点额度、可用状态和主要请求来源。" content-class="min-h-40">
+          <template #actions>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="rounded-md bg-emerald-50 px-2 py-1 font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                {{ totalSuccess }} 个可用
+              </span>
+              <span class="rounded-md bg-rose-50 px-2 py-1 font-medium text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                {{ totalFailure }} 个受限
+              </span>
+            </div>
+          </template>
+
+          <div v-if="loading" class="flex min-h-40 items-center justify-center gap-2 text-sm text-slate-500">
+            <Loader :size="20" class="animate-spin" />
+            正在获取节点状态
+          </div>
+          <ProxyMetrics v-else :data="metricsData" />
+        </BaseSectionCard>
       </div>
     </div>
   </div>

@@ -1,30 +1,6 @@
-export interface LoginAccount {
-  nickname: string;
-  avatar: string;
-  expires: string;
-  err?: string;
-}
-
 export interface BaseResp {
   err_msg: string;
   ret: number;
-}
-
-export interface StartLoginResult {
-  base_resp: BaseResp;
-}
-
-export interface GetAuthKeyResult {
-  code: number;
-  data: string;
-  msg: string;
-}
-
-export interface ScanLoginResult {
-  base_resp: BaseResp;
-  status: number;
-  acct_size: number;
-  binduin: string;
 }
 
 export interface AccountInfo {
@@ -134,6 +110,9 @@ export interface AppMsgAlbumInfo {
 }
 
 export interface AppMsgEx {
+  // 微信历史消息接口来源信息
+  _source?: 'profile_ext';
+  _profile_del_flag?: number;
   aid: string;
   album_id: string;
   appmsg_album_infos: AppMsgAlbumInfo[];
@@ -182,9 +161,4 @@ export interface DownloadableArticle {
   date: number;
   html?: string;
   packed?: boolean;
-}
-
-export interface LogoutResponse {
-  statusCode: number;
-  statusText: string;
 }

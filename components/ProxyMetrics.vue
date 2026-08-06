@@ -1,86 +1,100 @@
 <template>
-  <div class="flex flex-wrap gap-x-10 gap-y-5">
-    <div
+  <div class="grid gap-4 xl:grid-cols-2">
+    <article
       v-for="account in accountMetrics"
       :key="account.name"
-      class="relative w-full max-w-2xl border p-5 rounded-md hover:shadow"
+      class="relative rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
     >
-      <h3 class="text-xl text-gray-600 font-mono mb-3" :title="account.name">节点: {{ account.domain }}</h3>
-      <UMeter v-if="account.metric" :value="account.metric.dailyRequests" :max="100_000" color="orange">
+      <h3 class="mb-4 pr-10 font-mono text-sm font-medium text-slate-700 dark:text-slate-200" :title="account.name">
+        {{ account.domain }}
+      </h3>
+
+      <UMeter v-if="account.metric" :value="account.metric.dailyRequests" :max="100_000" color="blue">
         <template #indicator>
-          <div class="flex justify-between items-center text-gray-400">
-            <span>今日请求量</span>
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>今日额度</span>
             <p>
-              <span class="text-base text-green-500 font-semibold font-mono">
+              <span class="font-mono text-sm font-semibold text-slate-700 dark:text-slate-200">
                 {{ Math.round((Math.min(account.metric.dailyRequests, 100_000) / 100_000) * 100) }}%
               </span>
-              <span class="font-mono text-xs">
-                ({{ account.metric === null ? '未知' : account.metric.dailyRequests.toLocaleString('en-US') }}/{{
-                  (100_000).toLocaleString('en-US')
-                }})
+              <span class="ml-1 font-mono text-[11px]">
+                ({{ account.metric.dailyRequests.toLocaleString('en-US') }}/{{ (100_000).toLocaleString('en-US') }})
               </span>
             </p>
           </div>
         </template>
       </UMeter>
-      <span v-else>状态未知</span>
-      <div class="flex items-center gap-3 absolute right-5 top-5">
-        <div class="size-5">
-          <UIcon
-            v-if="account.copied"
-            name="i-lucide:check"
-            class="size-5 text-gray-500 hover:text-gray-400 cursor-pointer"
+      <span v-else class="text-sm text-slate-400">状态未知</span>
+
+      <div class="absolute right-4 top-4">
+        <UButton
+          v-if="account.copied"
+          icon="i-lucide:check"
+          color="gray"
+          variant="ghost"
+          size="xs"
+          square
+          aria-label="节点地址已复制"
+        />
+        <UTooltip v-else text="复制节点地址">
+          <UButton
+            icon="i-lucide:copy"
+            color="gray"
+            variant="ghost"
+            size="xs"
+            square
+            aria-label="复制节点地址"
+            @click="copyAddress(account)"
           />
-          <UTooltip v-else text="复制节点地址">
-            <UIcon
-              name="i-lucide:copy"
-              class="size-5 text-gray-500 hover:text-gray-400 cursor-pointer"
-              @click="copyAddress(account)"
+        </UTooltip>
+      </div>
+
+      <div class="mt-6 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <header class="mb-3 flex items-center justify-between">
+          <h4 class="text-sm font-medium text-slate-700 dark:text-slate-200">主要请求来源</h4>
+          <UButton
+            v-if="account.fetchAnalyticsLoading"
+            icon="i-lucide:loader-circle"
+            color="gray"
+            variant="ghost"
+            size="xs"
+            square
+            loading
+            aria-label="正在加载来源数据"
+          />
+          <UTooltip v-else text="加载节点使用信息">
+            <UButton
+              icon="i-lucide:activity"
+              color="gray"
+              variant="ghost"
+              size="xs"
+              square
+              aria-label="加载节点使用信息"
+              @click="nodeAnalytics(account)"
             />
           </UTooltip>
-        </div>
-      </div>
-      <div class="mt-5">
-        <header class="flex justify-between items-center mb-2">
-          <h3 class="text-base text-gray-500">统计信息</h3>
-          <div class="size-5">
-            <UIcon
-              v-if="account.fetchAnalyticsLoading"
-              name="i-lucide:loader"
-              class="size-5 text-gray-400 animate-spin"
-            />
-            <UTooltip v-else text="节点使用信息">
-              <UIcon
-                name="i-lucide:activity"
-                class="size-5 text-gray-500 hover:text-gray-400 cursor-pointer"
-                @click="nodeAnalytics(account)"
-              />
-            </UTooltip>
-          </div>
         </header>
 
         <div
           v-for="item in account.topClientIPs"
           :key="item.clientIP"
-          class="relative flex justify-between items-center text-gray-400 hover:bg-gray-100 my-2 px-2 py-1 rounded overflow-hidden"
+          class="relative my-1.5 flex items-center justify-between overflow-hidden rounded-md bg-slate-100 px-2.5 py-1.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
         >
-          <!-- 灰色背景条（全宽） -->
-          <div class="absolute inset-0 bg-gray-100 rounded"></div>
-
-          <!-- 蓝色进度条（根据 count / total 动态宽度） -->
           <div
             :style="{ width: account.total ? (item.count / account.total) * 100 + '%' : '0%' }"
-            class="absolute inset-y-0 left-0 bg-blue-700 rounded-l"
+            class="absolute inset-y-0 left-0 rounded-l bg-blue-200/70 dark:bg-blue-900/50"
           ></div>
-
-          <!-- IP 和计数文字（在最上层） -->
-          <p class="relative z-10 font-mono text-sm">{{ item.clientIP }}</p>
-          <p class="relative z-10 font-mono text-sm">
+          <p class="relative z-10 font-mono text-xs">{{ item.clientIP }}</p>
+          <p class="relative z-10 font-mono text-xs">
             {{ item.count > 1000 ? (item.count / 1000).toFixed(2) + 'k' : item.count }}
           </p>
         </div>
+
+        <p v-if="!account.fetchAnalyticsLoading && account.topClientIPs.length === 0" class="text-xs text-slate-400">
+          点击右侧图标加载来源数据
+        </p>
       </div>
-    </div>
+    </article>
   </div>
 </template>
 
