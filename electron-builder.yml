@@ -1,0 +1,37 @@
+appId: top.mptext.wechatArticleExporter
+productName: WeChat Article Exporter
+copyright: Copyright © 2025 WeChat Article Exporter
+
+directories:
+  output: release
+
+files:
+  - package.json
+  - electron/**
+  - .output/**
+  - credential-service/credential.py
+
+asar: true
+asarUnpack:
+  - .output/**
+  - credential-service/**
+
+npmRebuild: false
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+
+win:
+  target:
+    - nsis
+    - zip
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}

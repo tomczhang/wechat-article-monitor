@@ -13,13 +13,15 @@ import {
 } from '~/server/utils/system-proxy-manager';
 
 const MITM_PORT = process.env.CREDENTIAL_MITM_PORT || '65000';
-const SERVICE_DIR = resolve(process.cwd(), 'credential-service');
+const SERVICE_DIR = process.env.CREDENTIAL_SERVICE_DIR
+  ? resolve(process.env.CREDENTIAL_SERVICE_DIR)
+  : resolve(process.cwd(), 'credential-service');
 const CREDENTIAL_PY = join(SERVICE_DIR, 'credential.py');
 const LOCAL_MITMDUMP =
   process.platform === 'win32'
     ? join(SERVICE_DIR, '.venv', 'Scripts', 'mitmdump.exe')
     : join(SERVICE_DIR, '.venv', 'bin', 'mitmdump');
-const DATA_DIR = join(SERVICE_DIR, 'data');
+const DATA_DIR = process.env.CREDENTIAL_DATA_DIR ? resolve(process.env.CREDENTIAL_DATA_DIR) : join(SERVICE_DIR, 'data');
 const CREDENTIALS_JSON = join(DATA_DIR, 'credentials.json');
 const CREDENTIAL_LIVE_MS = 30 * 60 * 1000;
 
@@ -150,7 +152,8 @@ async function startMitmProxy() {
   }
 
   if (await isMitmPortListening()) {
-    console.error(`[credential-service] port ${MITM_PORT} is already occupied; refusing to manage system proxy`);
+    console.warn(`[credential-service] port ${MITM_PORT} is already listening; reusing existing mitmproxy endpoint`);
+    markMitmReady();
     return;
   }
 
@@ -186,6 +189,7 @@ async function startMitmProxy() {
   processInstance.once('spawn', () => {
     console.log(`[credential-service] mitmdump process started on port ${MITM_PORT}`);
     startMitmWatchdog(processInstance);
+    waitForMitmReady(processInstance);
   });
 
   processInstance.stdout?.on('data', (chunk: Buffer) => {
@@ -202,6 +206,9 @@ async function startMitmProxy() {
     const line = chunk.toString().trim();
     if (line) {
       console.error(`[mitmdump] ${line}`);
+      if (runtime.mitmProcess === processInstance && /HTTP\(S\) proxy.*listening/.test(line)) {
+        markMitmReady();
+      }
     }
   });
 
@@ -251,17 +258,36 @@ function startMitmWatchdog(processInstance: ChildProcess) {
   watchdog.unref();
 }
 
-function isMitmPortListening() {
+function isMitmPortListening(timeoutMs = 300) {
   return new Promise<boolean>(resolvePromise => {
     const socket = createConnection({ host: '127.0.0.1', port: Number(MITM_PORT) });
     const finish = (listening: boolean) => {
       socket.destroy();
       resolvePromise(listening);
     };
-    socket.setTimeout(300, () => finish(false));
+    socket.setTimeout(timeoutMs, () => finish(false));
     socket.once('connect', () => finish(true));
     socket.once('error', () => finish(false));
   });
+}
+
+function waitForMitmReady(processInstance: ChildProcess) {
+  const startedAt = Date.now();
+  const timer = setInterval(async () => {
+    if (runtime.mitmProcess !== processInstance || runtime.mitmRunning) {
+      clearInterval(timer);
+      return;
+    }
+    if (Date.now() - startedAt > 10_000) {
+      clearInterval(timer);
+      console.error(`[credential-service] timed out waiting for mitmproxy on port ${MITM_PORT}`);
+      return;
+    }
+    if (await isMitmPortListening(500)) {
+      clearInterval(timer);
+      markMitmReady();
+    }
+  }, 500);
 }
 
 function markMitmReady() {

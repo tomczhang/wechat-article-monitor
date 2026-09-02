@@ -1,6 +1,9 @@
 {
   "name": "wechat-article-exporter",
   "version": "2.3.15",
+  "productName": "WeChat Article Exporter",
+  "description": "微信公众号文章批量下载导出桌面应用",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "debug": "nuxt dev --inspect",
@@ -8,6 +11,11 @@
     "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test test/*.test.ts",
     "build": "nuxt build",
     "preview": "NITRO_PRESET=cloudflare_pages nuxt build && npx wrangler --cwd dist pages dev",
+    "electron:dev": "concurrently -k -s first \"yarn dev --host 127.0.0.1\" \"wait-on http://127.0.0.1:3000 && electron .\"",
+    "electron:pack": "yarn build && electron-builder --dir",
+    "electron:build:mac-arm64": "yarn build && electron-builder --mac --arm64",
+    "electron:build:mac-x64": "yarn build && electron-builder --mac --x64",
+    "electron:build:win-x64": "yarn build && electron-builder --win --x64",
     "format": "biome check --write",
     "postinstall": "nuxt prepare",
     "docker:build": "docker build --build-arg VERSION=$npm_package_version -t ghcr.io/wechat-article/wechat-article-exporter:$npm_package_version .",
@@ -59,9 +67,13 @@
     "@biomejs/biome": "2.3.8",
     "@types/file-saver": "^2.0.7",
     "@types/turndown": "^5.0.5",
+    "concurrently": "^10.0.5",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
     "prettier": "^3.5.2",
     "tailwindcss-debug-screens": "^2.2.1",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "wait-on": "^9.1.0"
   },
   "engines": {
     "node": ">=22"
