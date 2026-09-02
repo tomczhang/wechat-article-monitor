@@ -38,7 +38,8 @@ async function open(article: AppMsgEx) {
     // articleHtml.value = await normalizeHtmlForPreview(htmlAsset, rawHtml);
     articleHtml.value = await renderHTMLFromCgiDataNew(
       cgiData,
-      (preferences.value as Preferences).exportConfig.exportHtmlIncludeComments
+      (preferences.value as Preferences).exportConfig.exportHtmlIncludeComments,
+      article.link
     );
   } else {
     toast.warning('文章预览失败', `文章【${article.title}】还未拉取文章内容`);

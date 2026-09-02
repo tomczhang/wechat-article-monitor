@@ -13,17 +13,20 @@ const ITEM_SHOW_TYPE = {
  * 根据解析的 cgiDataNew 对象进行渲染
  * @param cgiData
  * @param comments 是否渲染留言数据，默认是
+ * @param sourceUrl 文章在本地缓存中的 URL。评论缓存以下载/导出时传入的文章 URL 为主键，
+ *                  cgiData.link 在微信页面中可能是 canonical/短链/转义后的地址，不能稳定命中评论缓存。
  */
-export async function renderHTMLFromCgiDataNew(cgiData: any, comments = true) {
+export async function renderHTMLFromCgiDataNew(cgiData: any, comments = true, sourceUrl?: string) {
   const title = extractTitle(cgiData);
   const meta = renderMetaInfo(cgiData);
   const contentHTML = extractContentHTML(cgiData);
   const bottomBarHTML = await renderBottomBar(cgiData);
+  const articleUrl = sourceUrl || cgiData.link;
 
   // 渲染留言
   let commentHTML = '';
   if (comments) {
-    commentHTML = await renderComments(cgiData.link);
+    commentHTML = await renderComments(articleUrl);
   }
 
   return `<!DOCTYPE html>
@@ -187,7 +190,7 @@ export async function renderHTMLFromCgiDataNew(cgiData: any, comments = true) {
 <div class="__page_content__">
 <h1 class="title">${title}</h1>
 ${meta}
-<blockquote class="source">原文地址: <a href="${cgiData.link}">${cgiData.link}</a></blockquote>
+<blockquote class="source">原文地址: <a href="${articleUrl}">${articleUrl}</a></blockquote>
 ${contentHTML}
 ${commentHTML}
 

@@ -576,7 +576,7 @@ export class Exporter extends BaseDownloader {
       console.warn(`文章(url: ${url})无法解析 cgiDataNew，跳过导出`);
       return '';
     }
-    return await renderHTMLFromCgiDataNew(cgiData, comments);
+    return await renderHTMLFromCgiDataNew(cgiData, comments, url);
   }
 
   /**
